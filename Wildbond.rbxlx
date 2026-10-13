@@ -84,6 +84,24 @@ local ambient = {
 	{ id = "brush04", name = "Bramble Forager", kind = "sprout", x = 70, z = 33, health = 80, damage = 6 },
 	{ id = "brush05", name = "Reed Warden", kind = "reed", x = -40, z = -100, health = 100, damage = 7 },
 	{ id = "brush06", name = "Reed Warden", kind = "reed", x = 50, z = -116, health = 100, damage = 7 },
+	-- The outer routes add places to hunt without making the first expedition
+	-- longer. These creatures use the same readable four species and attack rules.
+	{ id = "forest01", name = "Bramble Forager", kind = "sprout", x = -125, z = -20, health = 80, damage = 6 },
+	{ id = "forest02", name = "Brush Boar", kind = "boar", x = -192, z = -52, health = 75, damage = 6 },
+	{ id = "forest03", name = "Brush Boar", kind = "boar", x = -207, z = -145, health = 75, damage = 6 },
+	{ id = "forest04", name = "Bramble Forager", kind = "sprout", x = -119, z = -147, health = 80, damage = 6 },
+	{ id = "marsh01", name = "Reed Warden", kind = "reed", x = -92, z = -218, health = 100, damage = 7 },
+	{ id = "marsh02", name = "Reed Warden", kind = "reed", x = -12, z = -243, health = 100, damage = 7 },
+	{ id = "marsh03", name = "Reed Warden", kind = "reed", x = 70, z = -229, health = 100, damage = 7 },
+	{ id = "marsh04", name = "Reed Warden", kind = "reed", x = 180, z = -258, health = 100, damage = 7 },
+	{ id = "outskirts01", name = "Bramble Forager", kind = "sprout", x = 154, z = -140, health = 80, damage = 6 },
+	{ id = "outskirts02", name = "Brush Boar", kind = "boar", x = 220, z = -70, health = 75, damage = 6 },
+	{ id = "outskirts03", name = "Bramble Forager", kind = "sprout", x = 210, z = 37, health = 80, damage = 6 },
+	{ id = "meadow01", name = "Brush Boar", kind = "boar", x = 175, z = 132, health = 75, damage = 6 },
+	{ id = "meadow02", name = "Bramble Forager", kind = "sprout", x = 85, z = 188, health = 80, damage = 6 },
+	{ id = "meadow03", name = "Bramble Forager", kind = "sprout", x = -24, z = 187, health = 80, damage = 6 },
+	{ id = "meadow04", name = "Brush Boar", kind = "boar", x = -150, z = 166, health = 75, damage = 6 },
+	{ id = "forest05", name = "Brush Boar", kind = "boar", x = -219, z = 83, health = 75, damage = 6 },
 }
 for _, spawn in ambient do
 	table.insert(foes, {
@@ -199,7 +217,6 @@ local DodgeRules = {
 	maxStepDistance = 2,
 	invulnerabilityDuration = 0.18,
 	cooldown = 4,
-	doubleTapWindow = 0.28,
 	collisionMargin = 1.25,
 }
 
@@ -469,13 +486,135 @@ return table.freeze(HuntMetrics)
 ]]></string>
         </Properties>
       </Item>
+      <Item class="ModuleScript" referent="6">
+        <Properties>
+          <string name="Name">PetRules</string>
+          <string name="Source"><![CDATA[--!strict
+-- Owned companions share combat strength; shells buy a different appearance.
+local PetRules = {}
+PetRules.maxHealth = 60
+PetRules.attackDamage = 4
+PetRules.skillDamage = 12
+PetRules.defense = 1
+PetRules.moveSpeed = 22
+PetRules.attackRange = 5.5
+PetRules.attackCooldown = 1.2
+PetRules.attackWindup = 0.3
+PetRules.skillRange = 18
+PetRules.skillCooldown = 6
+PetRules.skillWindup = 0.35
+PetRules.ownerLeash = 24
+PetRules.reviveDelay = 10
+
+function PetRules.known(id: any): boolean
+	return id == "mosswolf" or id == "emberfox" or id == "tidecub"
+end
+
+function PetRules.damageTaken(amount: number): number
+	if amount ~= amount or amount == math.huge or amount <= 0 then return 0 end
+	return math.max(1, amount - PetRules.defense)
+end
+
+return table.freeze(PetRules)
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="7">
+        <Properties>
+          <string name="Name">Progression</string>
+          <string name="Source"><![CDATA[--!strict
+-- Session progression. Only the server awards kills; this module accepts no reward amounts.
+local Progression = {}
+
+export type Profile = { coins: number, xp: number, level: number }
+export type Snapshot = { coins: number, xp: number, level: number, nextLevelXp: number, maxLevel: number }
+export type Reward = { coins: number, xp: number }
+
+Progression.maxLevel = 40
+Progression.maxCoins = 2147483647
+
+local rewards: { [string]: Reward } = {
+	boar = { coins = 4, xp = 8 },
+	sprout = { coins = 5, xp = 10 },
+	reed = { coins = 6, xp = 12 },
+	ancient = { coins = 25, xp = 45 },
+}
+for _, reward in rewards do table.freeze(reward) end
+Progression.rewards = table.freeze(rewards)
+
+local function integer(value: any, minimum: number, maximum: number): boolean
+	return type(value) == "number" and value == value and value >= minimum and value <= maximum
+		and value % 1 == 0
+end
+
+local function threshold(level: number): number
+	local offset = level - 1
+	return 60 + 20 * offset + 5 * offset * offset
+end
+
+function Progression.xpToNext(level: any): number?
+	if not integer(level, 1, Progression.maxLevel) then return nil end
+	return if level == Progression.maxLevel then 0 else threshold(level)
+end
+
+local function validProfile(profile: any): boolean
+	if type(profile) ~= "table" or not integer(profile.level, 1, Progression.maxLevel)
+		or not integer(profile.coins, 0, Progression.maxCoins) then return false end
+	local maximumXp = if profile.level == Progression.maxLevel then 0 else threshold(profile.level) - 1
+	return integer(profile.xp, 0, maximumXp)
+end
+
+function Progression.new(): Profile
+	return { coins = 0, xp = 0, level = 1 }
+end
+
+-- XP is the remainder toward the next level. The level cap consumes further XP.
+-- Foe health, name, and caller-supplied reward fields cannot change this catalog.
+function Progression.award(profile: any, definition: any): (number?, string?)
+	if not validProfile(profile) then return nil, "Invalid progression profile." end
+	if type(definition) ~= "table" or type(definition.kind) ~= "string" or type(definition.boss) ~= "boolean" then
+		return nil, "Invalid foe definition."
+	end
+	local kind: string = definition.kind
+	local reward = rewards[kind]
+	if reward == nil or definition.boss ~= (kind == "ancient") then return nil, "Unknown foe reward." end
+	local level: number = profile.level
+	local xp: number = if level == Progression.maxLevel then 0 else profile.xp + reward.xp
+	local previousLevel = level
+	-- The loop has a fixed bound even if this catalog later gains larger rewards.
+	for _ = 1, Progression.maxLevel - 1 do
+		if level == Progression.maxLevel or xp < threshold(level) then break end
+		xp -= threshold(level)
+		level += 1
+	end
+	profile.level = level
+	profile.xp = if level == Progression.maxLevel then 0 else xp
+	profile.coins = math.min(profile.coins + reward.coins, Progression.maxCoins)
+	return level - previousLevel, nil
+end
+
+function Progression.snapshot(profile: any): (Snapshot?, string?)
+	if not validProfile(profile) then return nil, "Invalid progression profile." end
+	return {
+		coins = profile.coins,
+		xp = profile.xp,
+		level = profile.level,
+		nextLevelXp = if profile.level == Progression.maxLevel then 0 else threshold(profile.level),
+		maxLevel = Progression.maxLevel,
+	}, nil
+end
+
+return table.freeze(Progression)
+]]></string>
+        </Properties>
+      </Item>
     </Item>
   </Item>
-  <Item class="ServerScriptService" referent="6">
+  <Item class="ServerScriptService" referent="8">
     <Properties>
       <string name="Name">ServerScriptService</string>
     </Properties>
-    <Item class="Script" referent="7">
+    <Item class="Script" referent="9">
       <Properties>
         <string name="Name">WildbondServer</string>
         <token name="RunContext">0</token>
@@ -484,12 +623,15 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local shared = ReplicatedStorage:WaitForChild("Wildbond")
+shared:SetAttribute("BuildVersion", "0.4.0")
 local Expedition = require(shared:WaitForChild("Expedition"))
 local CombatRules = require(shared:WaitForChild("CombatRules"))
 local HuntMetrics = require(shared:WaitForChild("HuntMetrics"))
+local Progression = require(shared:WaitForChild("Progression"))
 local WorldBuilder = require(script:WaitForChild("WorldBuilder"))
 local CombatService = require(script:WaitForChild("CombatService"))
 local DodgeService = require(script:WaitForChild("DodgeService"))
+local PetService = require(script:WaitForChild("PetService"))
 local world = WorldBuilder.build()
 
 local remotes = Instance.new("Folder")
@@ -508,6 +650,7 @@ effect.Parent = remotes
 -- This alpha deliberately keeps session data in memory. No Robux purchases exist.
 local sessions = {}
 local measurements = {}
+local profiles = {}
 local lastCommand = {}
 local lastPrompt = {}
 local actionIntervals = { sync = 1, attack = 0.1, bond = 0.1, dodge = 0.1, unlock = 0.25, equip = 0.25 }
@@ -520,6 +663,7 @@ local function send(player, message, success)
 	player:SetAttribute("CompanionId", state.equipped)
 	local snapshot = Expedition.snapshot(state)
 	snapshot.timing = HuntMetrics.snapshot(measurements[player], os.clock())
+	snapshot.progression = Progression.snapshot(profiles[player])
 	update:FireClient(player, snapshot, message, success)
 end
 
@@ -533,6 +677,20 @@ end, function(player, id)
 	end
 end, function(player, targetPosition)
 	effect:FireClient(player, "bond", targetPosition)
+end, function(player, definition)
+	local profile = profiles[player]
+	if not profile or player.Parent ~= Players then return end
+	local gained = Progression.award(profile, definition)
+	if gained == nil then return end
+	local reward = Progression.rewards[definition.kind]
+	local message = string.format("+%d coins · +%d XP", reward.coins, reward.xp)
+	if gained > 0 then message ..= string.format(" · Level %d!", profile.level) end
+	send(player, message, true)
+end)
+local companions = PetService.start(function(player)
+	return sessions[player]
+end, combat, function(player, targetPosition)
+	effect:FireClient(player, "bond", targetPosition)
 end)
 local dodging = DodgeService.start()
 
@@ -542,6 +700,7 @@ local function addPlayer(player)
 	end
 	sessions[player] = Expedition.new()
 	measurements[player] = HuntMetrics.new()
+	profiles[player] = Progression.new()
 	player:SetAttribute("CompanionId", "mosswolf")
 	local function characterAdded(character)
 		local humanoid = character:WaitForChild("Humanoid", 10)
@@ -566,6 +725,7 @@ Players.PlayerAdded:Connect(addPlayer)
 Players.PlayerRemoving:Connect(function(player)
 	sessions[player] = nil
 	measurements[player] = nil
+	profiles[player] = nil
 	lastCommand[player] = nil
 	lastPrompt[player] = nil
 end)
@@ -663,14 +823,15 @@ command.OnServerEvent:Connect(function(player, action, payload)
 end)
 
 game:BindToClose(function()
+	companions.destroy()
 	combat.destroy()
 	dodging.destroy()
 end)
 
-print("Wildbond alpha ready: roaming foes, animated attacks and server dodges; purchases disabled.")
+print("Wildbond 0.4.0 ready: roaming foes, companion HP and automatic combat; purchases disabled.")
 ]]></string>
       </Properties>
-      <Item class="ModuleScript" referent="8">
+      <Item class="ModuleScript" referent="10">
         <Properties>
           <string name="Name">CombatService</string>
           <string name="Source"><![CDATA[--!strict
@@ -684,7 +845,7 @@ local Rules = require(ReplicatedStorage:WaitForChild("Wildbond"):WaitForChild("C
 
 type HuntState = Rules.HuntState
 type Definition = Rules.FoeDefinition
-type Actor = { player: Player, character: Model, humanoid: Humanoid, root: BasePart }
+type Actor = { player: Player, character: Model, humanoid: Humanoid?, root: BasePart, pet: boolean?, life: number? }
 type Slam = { center: Vector3, radius: number, resolveAt: number, disc: Part }
 type Foe = {
 	definition: Definition,
@@ -695,6 +856,7 @@ type Foe = {
 	alive: boolean,
 	contributors: { [Player]: Model },
 	participants: { [Player]: boolean },
+	threatened: { [Player]: Model },
 	participantCount: number,
 	life: number,
 	engaged: boolean,
@@ -758,10 +920,6 @@ local function place(foe: Foe, position: Vector3, direction: Vector3)
 		object.Position = object.CFrame.Position -- Also keeps reflected/headless Instances consistent.
 	end
 	foe.model:SetAttribute("FacingDirection", foe.facing)
-end
-
-local function takeDamage(source: Actor, amount: number, at: number)
-	if Rules.canTakeDamage(at, source.character:GetAttribute("DodgeUntil")) then source.humanoid:TakeDamage(amount) end
 end
 
 local function part(
@@ -929,7 +1087,7 @@ local function buildFoe(parent: Instance, definition: Definition, now: number): 
 	end
 	return {
 		definition = definition, model = model, root = body, health = definition.maxHealth,
-		maxHealth = definition.maxHealth, alive = true, contributors = {}, participants = {}, participantCount = 0, life = 1,
+		maxHealth = definition.maxHealth, alive = true, contributors = {}, participants = {}, threatened = {}, participantCount = 0, life = 1,
 		engaged = false, lastNearby = now, pattern = 0, nextSlam = math.huge,
 		respawnAt = nil, slam = nil, transparencies = transparencies,
 		label = label, healthText = healthText, healthFill = fill, highlight = highlight, flashUntil = 0,
@@ -966,6 +1124,9 @@ local function lineOfSight(source: Actor, foe: Foe): boolean
 	local parameters = RaycastParams.new()
 	parameters.FilterType = Enum.RaycastFilterType.Exclude
 	parameters.FilterDescendantsInstances = { source.character }
+	if source.pet and source.player.Character then
+		parameters.FilterDescendantsInstances = { source.character, source.player.Character }
+	end
 	parameters.RespectCanCollide = true
 	local from = source.root.Position
 	local result = Workspace:Raycast(from, foe.root.Position - from, parameters)
@@ -974,7 +1135,7 @@ end
 
 function CombatService.start(
 	getState: (Player) -> HuntState?, onDefeat: (Player, string) -> (),
-	onBondFx: ((Player, Vector3) -> ())?
+	onBondFx: ((Player, Vector3) -> ())?, onKill: ((Player, Definition) -> ())?
 )
 	local destroyed = false
 	local folder = Instance.new("Folder")
@@ -983,6 +1144,27 @@ function CombatService.start(
 	local foes: { Foe } = {}
 	local lastAttack: { [Player]: number } = {}
 	local lastBond: { [Player]: number } = {}
+	local combatUntil: { [Player]: number } = {}
+	local companions: any = nil
+	local function markCombat(player: Player, at: number)
+		combatUntil[player] = at + 1.2
+	end
+	local function currentTarget(saved: Actor): Actor?
+		if saved.pet then
+			local current = companions and companions.actor(saved.player)
+			return if current and current.character == saved.character and current.life == saved.life then current else nil
+		end
+		local current = actor(saved.player)
+		return if current and current.character == saved.character then current else nil
+	end
+	local function takeDamage(source: Actor, amount: number, at: number)
+		markCombat(source.player, at)
+		if source.pet then
+			if companions then companions.damage(source, amount, at) end
+		elseif source.humanoid and Rules.canTakeDamage(at, source.character:GetAttribute("DodgeUntil")) then
+			source.humanoid:TakeDamage(amount)
+		end
+	end
 	local now = Workspace:GetServerTimeNow()
 	for _, definition in Rules.foes do
 		table.insert(foes, buildFoe(folder, definition, now))
@@ -999,6 +1181,10 @@ function CombatService.start(
 		visible(foe, false)
 		for player, character in foe.contributors do
 			local source = actor(player)
+			if source and source.character == character and Rules.eligible(getState(player), true, foe.definition.id)
+				and Rules.inRange(point(source.root.Position), point(foe.root.Position), Rules.rewardRange) and onKill then
+				onKill(player, foe.definition)
+			end
 			if source and source.character == character and Rules.canReward(getState(player), true, player.Parent == Players, true,
 				foe.definition.id, point(source.root.Position), point(foe.root.Position)) then
 				onDefeat(player, foe.definition.id)
@@ -1012,12 +1198,15 @@ function CombatService.start(
 		local nearest: Actor? = nil
 		local best = Rules.aggroRange * Rules.aggroRange
 		for _, player in Players:GetPlayers() do
-			local source = actor(player)
-			if source and Rules.eligible(getState(player), true, foe.definition.id)
-				and Rules.inRange(point(source.root.Position), point(foe.home), Rules.leashRadius) then
-				local distance = Rules.distanceSquared(point(source.root.Position), point(foe.root.Position))
-				if distance <= Rules.aggroRange * Rules.aggroRange and lineOfSight(source, foe) then
-					if distance <= best then nearest, best = source, distance end
+			local owner = actor(player)
+			if not owner or not Rules.eligible(getState(player), true, foe.definition.id) then continue end
+			local candidates = { owner }
+			local companion = companions and companions.actor(player)
+			if companion then table.insert(candidates, companion) end
+			for _, source in candidates do
+				if Rules.inRange(point(source.root.Position), point(foe.home), Rules.leashRadius) then
+					local distance = Rules.distanceSquared(point(source.root.Position), point(foe.root.Position))
+					if distance <= best and lineOfSight(source, foe) then nearest, best = source, distance end
 				end
 			end
 		end
@@ -1035,7 +1224,7 @@ function CombatService.start(
 		foe.alive, foe.engaged = true, false
 		foe.health, foe.maxHealth = foe.definition.maxHealth, foe.definition.maxHealth
 		foe.contributors, foe.respawnAt, foe.flashUntil, foe.pattern = {}, nil, 0, 0
-		foe.participants, foe.participantCount = {}, 0
+		foe.participants, foe.participantCount, foe.threatened = {}, 0, {}
 		foe.lastNearby, foe.nextSlam = at, math.huge
 		foe.melee, foe.nextMelee, foe.recoverUntil = nil, at, at
 		place(foe, foe.home, Vector3.new(0, 0, 1))
@@ -1049,6 +1238,8 @@ function CombatService.start(
 
 	local function damage(foe: Foe, player: Player, source: Actor, amount: number, at: number)
 		engage(foe, at)
+		markCombat(player, at)
+		foe.threatened[player] = source.character
 		if not foe.participants[player] then
 			foe.participants[player] = true
 			foe.participantCount = math.min(foe.participantCount + 1, Rules.maxGroupSize)
@@ -1171,6 +1362,9 @@ function CombatService.start(
 			if nearest then
 				engage(foe, at)
 				foe.lastNearby = at
+				local owner = actor(nearest.player)
+				if owner then foe.threatened[nearest.player] = owner.character end
+				markCombat(nearest.player, at)
 			elseif foe.engaged and at >= foe.lastNearby + Rules.encounterResetDelay then
 				clearSlam(foe)
 				foe.melee = nil
@@ -1186,6 +1380,11 @@ function CombatService.start(
 						and Rules.inSlam(point(source.root.Position), point(slam.center), slam.radius) and lineOfSight(source, foe) then
 						takeDamage(source, foe.definition.slamDamage, at)
 					end
+					local pet = companions and companions.actor(player)
+					if pet and source and Rules.eligible(getState(player), true, foe.definition.id)
+						and Rules.inSlam(point(pet.root.Position), point(slam.center), slam.radius) and lineOfSight(pet, foe) then
+						takeDamage(pet, foe.definition.slamDamage, at)
+					end
 				end
 				clearSlam(foe)
 				foe.nextSlam = at + Rules.slamCooldown
@@ -1195,7 +1394,7 @@ function CombatService.start(
 			end
 			local melee = foe.melee
 			if melee and at >= melee.resolveAt then
-				local target = actor(melee.target.player)
+				local target = currentTarget(melee.target)
 				if target and target.character == melee.target.character and Rules.eligible(getState(target.player), true, foe.definition.id)
 					and Rules.inEnemyMelee(point(target.root.Position), point(foe.root.Position), point(foe.facing))
 					and lineOfSight(target, foe) then takeDamage(target, foe.definition.meleeDamage, at) end
@@ -1245,6 +1444,7 @@ function CombatService.start(
 	local leaving = Players.PlayerRemoving:Connect(function(player: Player)
 		lastAttack[player] = nil
 		lastBond[player] = nil
+		combatUntil[player] = nil
 		for _, foe in foes do
 			foe.contributors[player] = nil
 		end
@@ -1279,11 +1479,13 @@ function CombatService.start(
 	end
 
 	function service.cooldown(player: Player): number
+		if companions then return companions.cooldown(player) end
 		local previous = lastBond[player]
 		return if previous then math.max(0, previous + Rules.petCooldown - Workspace:GetServerTimeNow()) else 0
 	end
 
 	function service.bond(player: Player): (boolean, string)
+		if companions then return companions.skill(player) end
 		if destroyed then return false, "Combat is unavailable." end
 		local source, state = actor(player), getState(player)
 		if not source then return false, "Wait until your character is ready." end
@@ -1314,6 +1516,69 @@ function CombatService.start(
 		return true, "Companion strike!"
 	end
 
+
+	-- Companion hooks use server-created actor roots. No remote supplies a target or damage.
+	function service.attachCompanions(adapter: any)
+		companions = adapter
+	end
+
+	function service.inCombat(player: Player): boolean
+		local owner = actor(player)
+		if destroyed or not owner then return false end
+		for _, foe in foes do
+			if foe.alive and foe.engaged and foe.state ~= "Return" and foe.threatened[player] == owner.character
+				and Rules.inRange(point(owner.root.Position), point(foe.home), Rules.leashRadius)
+				and Rules.inRange(point(owner.root.Position), point(foe.root.Position), Rules.aggroRange)
+				and lineOfSight(owner, foe) then return true end
+		end
+		return Workspace:GetServerTimeNow() < (combatUntil[player] or -math.huge)
+	end
+
+	function service.selectCompanionTarget(player: Player, petRoot: BasePart, radius: number, provokedOnly: boolean): any
+		local owner, state = actor(player), getState(player)
+		if destroyed or not owner or not state then return nil end
+		local selected, best = nil, radius * radius
+		local source: Actor = { player = player, character = petRoot.Parent :: Model, root = petRoot, pet = true }
+		for _, foe in foes do
+			if not foe.alive or foe.state == "Return" or not Rules.eligible(state, true, foe.definition.id) then continue end
+			if provokedOnly and (not foe.engaged or foe.threatened[player] ~= owner.character) then continue end
+			if not Rules.inRange(point(owner.root.Position), point(foe.root.Position), companions.ownerLeash) then continue end
+			local distance = Rules.distanceSquared(point(petRoot.Position), point(foe.root.Position))
+			if distance <= best and lineOfSight(source, foe) then selected, best = foe, distance end
+		end
+		return if selected then { id = selected.definition.id, life = selected.life, model = selected.model, position = selected.root.Position } else nil
+	end
+
+	function service.engageCompanionTarget(player: Player, target: any)
+		local owner = actor(player)
+		if destroyed or not owner then return end
+		for _, foe in foes do
+			if foe.model == target.model and foe.life == target.life and foe.alive and foe.state ~= "Return" then
+				local at = Workspace:GetServerTimeNow()
+				engage(foe, at)
+				foe.threatened[player] = owner.character
+				markCombat(player, at)
+			end
+		end
+	end
+
+	function service.hitCompanionTarget(player: Player, petRoot: BasePart, target: any, amount: number, radius: number): boolean
+		local owner, state = actor(player), getState(player)
+		if destroyed or not owner or not state then return false end
+		local pet = companions and companions.actor(player)
+		if not pet or pet.root ~= petRoot then return false end
+		for _, foe in foes do
+			if foe.model == target.model and foe.life == target.life and foe.alive and foe.state ~= "Return"
+				and Rules.eligible(state, true, foe.definition.id)
+				and Rules.inRange(point(petRoot.Position), point(foe.root.Position), radius)
+				and Rules.inRange(point(owner.root.Position), point(foe.root.Position), companions.ownerLeash) and lineOfSight(pet, foe) then
+				damage(foe, player, owner, amount, Workspace:GetServerTimeNow())
+				return true
+			end
+		end
+		return false
+	end
+
 	function service.destroy()
 		if destroyed then
 			return
@@ -1338,7 +1603,7 @@ return CombatService
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="9">
+      <Item class="ModuleScript" referent="11">
         <Properties>
           <string name="Name">DodgeService</string>
           <string name="Source"><![CDATA[--!nonstrict
@@ -1468,7 +1733,256 @@ return DodgeService
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="10">
+      <Item class="ModuleScript" referent="12">
+        <Properties>
+          <string name="Name">PetService</string>
+          <string name="Source"><![CDATA[--!nonstrict
+-- Pet actors, health, movement, attacks and revival are authoritative server state.
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local Rules = require(ReplicatedStorage:WaitForChild("Wildbond"):WaitForChild("PetRules"))
+
+local PetService = {}
+
+local function ownerActor(player)
+	if player.Parent ~= Players then return nil end
+	local character = player.Character
+	if not character or not character.Parent then return nil end
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	local root = character:FindFirstChild("HumanoidRootPart")
+	if not humanoid or humanoid.Health <= 0 or not root or not root:IsA("BasePart") then return nil end
+	return { character = character, root = root }
+end
+
+function PetService.start(getState, combat, onSkillFx)
+	local folder = Instance.new("Folder")
+	folder.Name, folder.Parent = "WildbondCompanions", Workspace
+	local pets, destroyed = {}, false
+	local function validPet(player)
+		local state = getState(player)
+		return state and state.owned and Rules.known(state.equipped) and state.owned[state.equipped] == true
+	end
+	local function setState(pet, state, at, duration)
+		pet.state = state
+		pet.model:SetAttribute("State", state)
+		pet.model:SetAttribute("ActionStartedAt", at)
+		pet.model:SetAttribute("ActionDuration", duration or 0)
+		pet.player:SetAttribute("PetState", state)
+	end
+	local function publish(pet)
+		pet.model:SetAttribute("Health", pet.health)
+		pet.model:SetAttribute("MaxHealth", Rules.maxHealth)
+		pet.model:SetAttribute("PetRespawnAt", pet.respawnAt or 0)
+		pet.model:SetAttribute("PetSkillReadyAt", pet.nextSkill)
+		pet.player:SetAttribute("PetHealth", pet.health)
+		pet.player:SetAttribute("PetMaxHealth", Rules.maxHealth)
+		pet.player:SetAttribute("PetRespawnAt", pet.respawnAt or 0)
+		pet.player:SetAttribute("PetSkillReadyAt", pet.nextSkill)
+	end
+	local function create(player, owner, at)
+		local model = Instance.new("Model")
+		model.Name, model.Parent = "Companion_" .. tostring(player.UserId), folder
+		model:SetAttribute("OwnerUserId", player.UserId)
+		model:SetAttribute("PetId", getState(player).equipped)
+		local root = Instance.new("Part")
+		root.Name, root.Size = "Root", Vector3.new(1.7, 1.5, 2.7)
+		root.Anchored, root.CanCollide, root.CanTouch, root.CanQuery = true, false, false, false
+		root.Transparency, root.Parent = 1, model
+		root.CFrame = owner.root.CFrame * CFrame.new(3.2, -1.5, 3.6)
+		root.Position = root.CFrame.Position
+		model.PrimaryPart = root
+		local pet = { player = player, model = model, root = root, health = Rules.maxHealth,
+			state = "Follow", life = 1, nextAttack = at, nextSkill = at, respawnAt = nil, pending = nil,
+			equipped = getState(player).equipped, revision = getState(player).equipRevision }
+		pets[player] = pet
+		for key, value in { AttackDamage = Rules.attackDamage, SkillDamage = Rules.skillDamage,
+			Defense = Rules.defense, MoveSpeed = Rules.moveSpeed } do
+			model:SetAttribute(key, value)
+			player:SetAttribute("Pet" .. key, value)
+		end
+		setState(pet, "Follow", at)
+		publish(pet)
+		return pet
+	end
+	local function groundPosition(pet, owner, position)
+		local parameters = RaycastParams.new()
+		parameters.FilterType = Enum.RaycastFilterType.Exclude
+		local excluded = { folder, owner.character }
+		local guardians = Workspace:FindFirstChild("WildbondGuardians")
+		if guardians then table.insert(excluded, guardians) end
+		for _, player in Players:GetPlayers() do
+			if player.Character and player.Character ~= owner.character then table.insert(excluded, player.Character) end
+		end
+		parameters.FilterDescendantsInstances = excluded
+		parameters.RespectCanCollide = true
+		local floor = Workspace:Raycast(position + Vector3.new(0, 8, 0), Vector3.new(0, -28, 0), parameters)
+		if not floor or floor.Normal and floor.Normal.Y < 0.55 then return nil end
+		return Vector3.new(position.X, floor.Position.Y + 1.35, position.Z)
+	end
+	local function move(pet, owner, goal, delta, follow)
+		local from = pet.root.Position
+		local offset = Vector3.new(goal.X - from.X, 0, goal.Z - from.Z)
+		if offset.Magnitude < 0.1 then
+			local settled = groundPosition(pet, owner, from)
+			if settled then
+				pet.root.CFrame = CFrame.new(settled) * pet.root.CFrame.Rotation
+				pet.root.Position = settled
+			end
+			return
+		end
+		local distance = math.min(offset.Magnitude, Rules.moveSpeed * math.min(delta, 0.2))
+		-- Catch up after a real owner teleport/respawn without touching health or cooldown.
+		if follow and offset.Magnitude > 40 then distance = offset.Magnitude end
+		local nextPosition = groundPosition(pet, owner, from + offset.Unit * distance)
+		if not nextPosition then return end
+		local parameters = RaycastParams.new()
+		parameters.FilterType = Enum.RaycastFilterType.Exclude
+		parameters.FilterDescendantsInstances = { folder, owner.character, Workspace:FindFirstChild("WildbondGuardians") }
+		parameters.RespectCanCollide = true
+		if distance < 40 and Workspace:Raycast(from, offset.Unit * (distance + 0.8), parameters) then return end
+		pet.root.CFrame = CFrame.lookAt(nextPosition, nextPosition + offset.Unit)
+		pet.root.Position = nextPosition
+	end
+	local function begin(pet, owner, target, skill, at)
+		if pet.pending or pet.health <= 0 then return false end
+		if skill and at < pet.nextSkill or not skill and at < pet.nextAttack then return false end
+		local duration = if skill then Rules.skillWindup else Rules.attackWindup
+		if skill then pet.nextSkill = at + Rules.skillCooldown else pet.nextAttack = at + Rules.attackCooldown end
+		pet.pending = { target = target, resolveAt = at + duration, skill = skill,
+			character = owner.character, life = pet.life, revision = getState(pet.player).equipRevision,
+			equipped = getState(pet.player).equipped }
+		pet.model:SetAttribute("AttackTarget", target.position)
+		setState(pet, if skill then "Skill" else "Attack", at, duration)
+		combat.engageCompanionTarget(pet.player, target)
+		if skill and onSkillFx then onSkillFx(pet.player, target.position) end
+		publish(pet)
+		return true
+	end
+	local service = { ownerLeash = Rules.ownerLeash }
+	function service.actor(player)
+		local pet = pets[player]
+		if destroyed or not pet or pet.health <= 0 or not ownerActor(player) or not validPet(player) then return nil end
+		return { player = player, character = pet.model, root = pet.root, pet = true, life = pet.life }
+	end
+	function service.damage(source, amount, at)
+		local pet = pets[source.player]
+		if destroyed or not pet or pet.model ~= source.character or pet.life ~= source.life or pet.health <= 0 then return end
+		pet.health = math.max(0, pet.health - Rules.damageTaken(amount))
+		if pet.health <= 0 then
+			pet.life += 1
+			pet.pending, pet.respawnAt = nil, nil
+			setState(pet, "Dead", at, 0.65)
+		end
+		publish(pet)
+	end
+	function service.cooldown(player)
+		local pet = pets[player]
+		return if pet then math.max(0, pet.nextSkill - Workspace:GetServerTimeNow()) else 0
+	end
+	function service.skill(player)
+		local owner, pet = ownerActor(player), pets[player]
+		if destroyed or not owner or not validPet(player) then return false, "Wait until your companion is ready." end
+		if not pet or pet.health <= 0 then return false, "Your companion will return after ten seconds out of combat." end
+		local at = Workspace:GetServerTimeNow()
+		if pet.pending or at < pet.nextSkill then return false, "Your companion is catching its breath." end
+		local target = combat.selectCompanionTarget(player, pet.root, Rules.skillRange, false)
+		if not target then return false, "Move your companion closer to an eligible creature." end
+		begin(pet, owner, target, true, at)
+		return true, "Companion skill!"
+	end
+	combat.attachCompanions(service)
+	local function update(at, delta)
+		for _, player in Players:GetPlayers() do
+			local owner = ownerActor(player)
+			local inCombat = combat.inCombat(player)
+			player:SetAttribute("InCombat", inCombat)
+			local pet = pets[player]
+			if not pet and owner and validPet(player) then pet = create(player, owner, at) end
+			if not pet then continue end
+			local state = getState(player)
+			if state and (state.equipped ~= pet.equipped or state.equipRevision ~= pet.revision) then
+				pet.equipped, pet.revision, pet.pending = state.equipped, state.equipRevision, nil
+				pet.life += 1
+				pet.model:SetAttribute("PetId", state.equipped)
+				if pet.health > 0 then setState(pet, "Follow", at) end
+			end
+			if pet.health <= 0 then
+				if inCombat or not owner then pet.respawnAt = nil
+				elseif not pet.respawnAt then pet.respawnAt = at + Rules.reviveDelay
+				elseif at >= pet.respawnAt then
+					pet.health, pet.life, pet.respawnAt = Rules.maxHealth, pet.life + 1, nil
+					pet.nextAttack = math.max(pet.nextAttack, at + Rules.attackCooldown)
+					pet.nextSkill = math.max(pet.nextSkill, at + Rules.skillCooldown)
+					local position = groundPosition(pet, owner, owner.root.Position + Vector3.new(3.2, 0, 3.6))
+					if position then pet.root.CFrame = CFrame.new(position); pet.root.Position = position end
+					setState(pet, "Follow", at)
+				end
+				publish(pet)
+				continue
+			end
+			if not owner or not validPet(player) then
+				pet.pending = nil
+				if pet.state ~= "Follow" then setState(pet, "Follow", at) end
+				continue
+			end
+			local pending = pet.pending
+			if pending then
+				if pending.character ~= owner.character or pending.life ~= pet.life
+					or pending.revision ~= state.equipRevision or pending.equipped ~= state.equipped then
+					pet.pending = nil
+					setState(pet, "Follow", at)
+				elseif at >= pending.resolveAt then
+					combat.hitCompanionTarget(player, pet.root, pending.target,
+						if pending.skill then Rules.skillDamage else Rules.attackDamage,
+						if pending.skill then Rules.skillRange else Rules.attackRange)
+					pet.pending = nil
+					setState(pet, "Follow", at)
+				end
+			end
+			if pet.pending then continue end
+			local target = if inCombat then combat.selectCompanionTarget(player, pet.root, Rules.ownerLeash, true) else nil
+			if target then
+				local distance = (target.position - pet.root.Position).Magnitude
+				if at >= pet.nextSkill and distance <= Rules.skillRange then begin(pet, owner, target, true, at)
+				elseif distance <= Rules.attackRange then begin(pet, owner, target, false, at)
+				else move(pet, owner, target.position, delta, false) end
+			else
+				move(pet, owner, (owner.root.CFrame * CFrame.new(3.2, 0, 3.6)).Position, delta, true)
+			end
+		end
+	end
+	local accumulated = 0
+	local heartbeat = RunService.Heartbeat:Connect(function(delta)
+		if destroyed then return end
+		accumulated += delta
+		if accumulated < 0.1 then return end
+		local elapsed = accumulated
+		accumulated = 0
+		update(Workspace:GetServerTimeNow(), elapsed)
+	end)
+	local removing = Players.PlayerRemoving:Connect(function(player)
+		local pet = pets[player]
+		if pet then pet.model:Destroy(); pets[player] = nil end
+	end)
+	function service.destroy()
+		if destroyed then return end
+		destroyed = true
+		heartbeat:Disconnect()
+		removing:Disconnect()
+		combat.attachCompanions(nil)
+		pets = {}
+		folder:Destroy()
+	end
+	return service
+end
+
+return PetService
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="13">
         <Properties>
           <string name="Name">WorldBuilder</string>
           <string name="Source"><![CDATA[--!strict
@@ -1493,6 +2007,9 @@ function WorldBuilder.build(): World
 	local world = Instance.new("Model")
 	world.Name = "FirstTrailIsland"
 	world.Parent = workspace
+	-- Area grows by six, not distance by six. The first hunt stays in the core;
+	-- the outer routes are additional hunting ground rather than a longer tutorial.
+	local meadowWidth, meadowDepth = 550, 624
 	local partCount = 0
 	local prompts: { [string]: ProximityPrompt } = {}
 	local palette = {
@@ -1569,17 +2086,25 @@ function WorldBuilder.build(): World
 		return (point - (a + line * along)).Magnitude
 	end
 
+	local sceneryRoutes: { { a: Vector3, b: Vector3, width: number } } = {}
+	local regionLandmarks = {
+		{ id = "westwood", title = "WESTWOOD HOLLOW", x = -154, z = 21, color = Color3.fromRGB(107, 145, 104) },
+		{ id = "reedfen", title = "REEDFEN", x = -29, z = -294, color = Color3.fromRGB(143, 173, 141) },
+		{ id = "oldwatch", title = "OLDWATCH RIDGE", x = 218, z = -191, color = Color3.fromRGB(137, 150, 143) },
+		{ id = "sunmeadow", title = "SUNMEADOW", x = 85, z = 242, color = Color3.fromRGB(152, 177, 107) },
+	}
 	local function path(a: Vector3, b: Vector3, width: number, name: string?)
 		local delta = b - a
 		local middle = (a + b) / 2
 		part(name or "Trail", Vector3.new(width, 0.12, delta.Magnitude + 1), CFrame.lookAt(middle, b), palette.path, Enum.Material.Sand)
+		table.insert(sceneryRoutes, { a = a, b = b, width = width })
 	end
 
 	-- Keep the encounter floor level while the surrounding land reads as a valley.
 	-- The broad landscape continues beyond the ridges; there is no ocean/island edge.
 	part("WoodlandLandscape", Vector3.new(1800, 12, 1800), CFrame.new(8, -6, -29), palette.grass, Enum.Material.Grass)
-	part("IslandEarth", Vector3.new(220, 12, 260), CFrame.new(8, -4, -29), palette.earth, Enum.Material.Rock)
-	part("IslandMeadow", Vector3.new(220, 4, 260), CFrame.new(8, 2, -29), palette.grass, Enum.Material.Grass)
+	part("IslandEarth", Vector3.new(meadowWidth, 12, meadowDepth), CFrame.new(8, -4, -29), palette.earth, Enum.Material.Rock)
+	part("IslandMeadow", Vector3.new(meadowWidth, 4, meadowDepth), CFrame.new(8, 2, -29), palette.grass, Enum.Material.Grass)
 
 	local trailPoints = {
 		Vector3.new(0, 4.07, 35),
@@ -1603,6 +2128,46 @@ function WorldBuilder.build(): World
 	}
 	for _, branch in sideTrails do
 		path(branch[1], branch[2], 6, "SideTrail")
+	end
+	-- A continuous outer hunting circuit connects five visually distinct areas.
+	-- Cross routes let players return to camp without walking the whole circuit.
+	local outerPoints = {
+		Vector3.new(-45, 4.07, -25), Vector3.new(-124, 4.07, -35),
+		Vector3.new(-194, 4.07, -70), Vector3.new(-216, 4.07, -143),
+		Vector3.new(-134, 4.07, -160), Vector3.new(-84, 4.07, -224),
+		Vector3.new(-12, 4.07, -253), Vector3.new(77, 4.07, -245),
+		Vector3.new(178, 4.07, -269), Vector3.new(187, 4.07, -198),
+		Vector3.new(169, 4.07, -139), Vector3.new(227, 4.07, -70),
+		Vector3.new(227, 4.07, 36), Vector3.new(188, 4.07, 132),
+		Vector3.new(85, 4.07, 199), Vector3.new(-24, 4.07, 202),
+		Vector3.new(-146, 4.07, 181), Vector3.new(-229, 4.07, 97),
+		Vector3.new(-187, 4.07, 23), Vector3.new(-124, 4.07, -35),
+	}
+	for index = 1, #outerPoints - 1 do
+		path(outerPoints[index], outerPoints[index + 1], 8, "OuterTrail")
+	end
+	local crossRoutes = {
+		{ Vector3.new(0, 4.07, -65), Vector3.new(28, 4.07, -122) },
+		{ Vector3.new(28, 4.07, -122), Vector3.new(16, 4.07, -171) },
+		{ Vector3.new(16, 4.07, -171), Vector3.new(-12, 4.07, -253) },
+		{ Vector3.new(65, 4.07, -80), Vector3.new(169, 4.07, -139) },
+		{ Vector3.new(63, 4.07, -18), Vector3.new(227, 4.07, 36) },
+		{ Vector3.new(0, 4.07, 35), Vector3.new(46, 4.07, 92) },
+		{ Vector3.new(46, 4.07, 92), Vector3.new(85, 4.07, 199) },
+		{ Vector3.new(-187, 4.07, 23), Vector3.new(-124, 4.07, 55) },
+		{ Vector3.new(-124, 4.07, 55), Vector3.new(-146, 4.07, 181) },
+	}
+	for _, branch in crossRoutes do
+		path(branch[1], branch[2], 7, "CrossTrail")
+	end
+	local landmarkRoutes = {
+		{ Vector3.new(-187, 4.07, 23), Vector3.new(-154, 4.07, 9) },
+		{ Vector3.new(-12, 4.07, -253), Vector3.new(-29, 4.07, -282) },
+		{ Vector3.new(187, 4.07, -198), Vector3.new(205, 4.07, -191) },
+		{ Vector3.new(85, 4.07, 199), Vector3.new(85, 4.07, 229) },
+	}
+	for _, branch in landmarkRoutes do
+		path(branch[1], branch[2], 6, "LandmarkTrail")
 	end
 
 	-- The tavern has an actual doorway, a warm interior, and a readable silhouette.
@@ -1701,7 +2266,7 @@ function WorldBuilder.build(): World
 	local approach = { Vector3.new(0, 4.07, 35), Vector3.new(-7, 4.07, 55), Vector3.new(-45, 4.07, 55) }
 	for index = 1, #approach - 1 do
 		local a, b = approach[index], approach[index + 1]
-		part("CarriageApproach", Vector3.new(5, 0.12, (b - a).Magnitude + 1), CFrame.lookAt((a + b) / 2, b), palette.path, Enum.Material.Ground)
+		path(a, b, 5, "CarriageApproach")
 	end
 	local carriageX, carriageZ = -59, 66
 	part("CarriageBed", Vector3.new(6.5, 0.55, 10), CFrame.new(carriageX, 6.15, carriageZ), palette.woodLight, Enum.Material.WoodPlanks)
@@ -1761,26 +2326,26 @@ function WorldBuilder.build(): World
 	-- Overlapping ridges enclose the playable region and continue into the horizon.
 	-- The low valley remains readable from camp rather than exposing an island rim.
 	for _, side in { -1, 1 } do
-		for index = 1, 9 do
-			local cliffZ = 85 - (index - 1) * 29
+		for index = 1, 18 do
+			local cliffZ = 267 - (index - 1) * 35
 			local height = 22 + index % 3 * 6
-			local cliffX = if side < 0 then -103 else 119
-			part("ValleySideRidge", Vector3.new(22, height, 32), CFrame.new(cliffX, 4 + height / 2, cliffZ), palette.stone, Enum.Material.Rock)
-			part("ValleySideGrass", Vector3.new(23, 1.2, 33), CFrame.new(cliffX, 4 + height + 0.3, cliffZ), palette.grassLight, Enum.Material.Grass)
+			local cliffX = if side < 0 then -278 else 294
+			part("ValleySideRidge", Vector3.new(22, height, 38), CFrame.new(cliffX, 4 + height / 2, cliffZ), palette.stone, Enum.Material.Rock)
+			part("ValleySideGrass", Vector3.new(23, 1.2, 39), CFrame.new(cliffX, 4 + height + 0.3, cliffZ), palette.grassLight, Enum.Material.Grass)
 		end
 	end
-	for index = 1, 8 do
-		local cliffX = -98 + (index - 1) * 30
+	for index = 1, 18 do
+		local cliffX = -257 + (index - 1) * 31
 		local height = 24 + index % 3 * 5
-		part("NorthernCliff", Vector3.new(33, height, 24), CFrame.new(cliffX, 4 + height / 2, -155), palette.stone, Enum.Material.Rock)
-		part("NorthernGrass", Vector3.new(34, 1.2, 25), CFrame.new(cliffX, 4 + height + 0.3, -155), palette.grassLight, Enum.Material.Grass)
-		part("SouthernRidge", Vector3.new(33, 18 + index % 2 * 5, 24), CFrame.new(cliffX, 13 + index % 2 * 2.5, 101), palette.stone, Enum.Material.Rock)
-		part("SouthernRidgeGrass", Vector3.new(34, 1.2, 25), CFrame.new(cliffX, 22.4 + index % 2 * 5, 101), palette.grassLight, Enum.Material.Grass)
+		part("NorthernCliff", Vector3.new(34, height, 24), CFrame.new(cliffX, 4 + height / 2, -351), palette.stone, Enum.Material.Rock)
+		part("NorthernGrass", Vector3.new(35, 1.2, 25), CFrame.new(cliffX, 4 + height + 0.3, -351), palette.grassLight, Enum.Material.Grass)
+		part("SouthernRidge", Vector3.new(34, 18 + index % 2 * 5, 24), CFrame.new(cliffX, 13 + index % 2 * 2.5, 293), palette.stone, Enum.Material.Rock)
+		part("SouthernRidgeGrass", Vector3.new(35, 1.2, 25), CFrame.new(cliffX, 22.4 + index % 2 * 5, 293), palette.grassLight, Enum.Material.Grass)
 	end
 	for layer = 1, 2 do
-		for index = 1, 7 do
+		for index = 1, 10 do
 			local height = 44 + layer * 20 + index % 3 * 14
-			local ridge = part("DistantWoodlandRidge", Vector3.new(90, height, 84), CFrame.new(-224 + index * 59, height / 2 - 2, -165 - layer * 56) * CFrame.Angles(0, math.rad(index % 2 * 20 - 10), 0), if layer == 1 then Color3.fromRGB(112, 141, 126) else Color3.fromRGB(137, 163, 152), Enum.Material.Grass)
+			local ridge = part("DistantWoodlandRidge", Vector3.new(90, height, 84), CFrame.new(-386 + index * 72, height / 2 - 2, -365 - layer * 56) * CFrame.Angles(0, math.rad(index % 2 * 20 - 10), 0), if layer == 1 then Color3.fromRGB(112, 141, 126) else Color3.fromRGB(137, 163, 152), Enum.Material.Grass)
 			ridge.CanCollide = false
 		end
 	end
@@ -1842,7 +2407,7 @@ function WorldBuilder.build(): World
 		if (point - Vector3.new(-24, 4.07, 38)).Magnitude < 22 or (point - Vector3.new(20, 4.07, 27)).Magnitude < 20 then
 			return false
 		end
-		if x > -74 and x < -37 and z > 40 then
+		if x > -74 and x < -37 and z > 40 and z < 90 then
 			return false
 		end
 		if distanceToSegment(point, Vector3.new(0, 4.07, 35), Vector3.new(-7, 4.07, 55)) < 7
@@ -1853,42 +2418,111 @@ function WorldBuilder.build(): World
 		-- roaming space automatically instead of silently spawning under scenery.
 		for _, foe in CombatRules.foes do
 			local encounter = Vector3.new(foe.position.x, 4.07, foe.position.z)
-			local clearingRadius = math.max(CombatRules.patrolRadius + 11, if foe.boss then 28 else 23)
+			local clearingRadius = CombatRules.leashRadius + 11
 			if (point - encounter).Magnitude < clearingRadius then
 				return false
 			end
 		end
-		if x > -32 and x < 13 and z < -84 then
+		if x > -32 and x < 13 and z < -84 and z > -123 then
 			return false
 		end
-		for index = 1, #trailPoints - 1 do
-			if distanceToSegment(point, trailPoints[index], trailPoints[index + 1]) < 9 then
+		for _, landmark in regionLandmarks do
+			if (point - Vector3.new(landmark.x, 4.07, landmark.z)).Magnitude < 23 then
 				return false
 			end
 		end
-		for _, branch in sideTrails do
-			if distanceToSegment(point, branch[1], branch[2]) < 8 then
+		for _, route in sceneryRoutes do
+			if distanceToSegment(point, route.a, route.b) < route.width / 2 + 7 then
 				return false
 			end
 		end
 		return true
 	end
 
+	-- Outer landmarks use different silhouettes, so a route is recognisable
+	-- before its sign is readable. They have no pretend quest/vendor interaction.
+	for _, landmark in regionLandmarks do
+		local x, z = landmark.x, landmark.z
+		local patch = part("RegionClearing", Vector3.new(35, 0.1, 31), CFrame.new(x, 4.05, z), landmark.color, Enum.Material.Grass)
+		patch:SetAttribute("SubregionId", landmark.id)
+		patch.CanCollide = false
+		local sign = part("OuterRegionSign", Vector3.new(7, 1.8, 0.45), CFrame.new(x + 10, 7.2, z - 8), palette.woodLight, Enum.Material.Wood)
+		sign:SetAttribute("SubregionId", landmark.id)
+		part("OuterSignPost", Vector3.new(0.5, 4.5, 0.5), CFrame.new(x + 10, 6.25, z - 8), palette.wood)
+		label(sign, landmark.title)
+	end
+	-- Woodcutters' open hut, with a doorway on the side facing its approach.
+	part("WoodcutterFloor", Vector3.new(12, 0.22, 10), CFrame.new(-154, 4.15, 21), palette.woodLight, Enum.Material.WoodPlanks)
+	part("WoodcutterBack", Vector3.new(12, 6, 0.6), CFrame.new(-154, 7, 26), palette.wood, Enum.Material.Wood)
+	for _, side in { -1, 1 } do
+		part("WoodcutterWall", Vector3.new(0.6, 6, 10), CFrame.new(-154 + side * 6, 7, 21), palette.wood, Enum.Material.Wood)
+		part("WoodcutterRoof", Vector3.new(7.3, 0.6, 14), CFrame.new(-154 + side * 3.15, 11, 21) * CFrame.Angles(0, 0, math.rad(-side * 24)), palette.roof)
+		part("Woodpile", Vector3.new(2, 1.8, 5), CFrame.new(-154 + side * 10, 4.9, 25), palette.woodLight, Enum.Material.Wood)
+	end
+	-- Reeds and connected shallow pools visually distinguish the northern fen.
+	for index = 1, 5 do
+		local fenX = -65 + (index - 1) * 48
+		local water = part("ReedfenPool", Vector3.new(35, 0.12, 19), CFrame.new(fenX, 4.12, -304 + index % 2 * 7), palette.water, Enum.Material.Glass)
+		water.Transparency = 0.3
+		water.CanCollide = false
+		for reed = 1, 5 do
+			local stalk = part("FenReed", Vector3.new(0.2, 2.3 + reed % 2, 0.2), CFrame.new(fenX - 12 + reed * 4.5, 5.45, -313 + index % 2 * 7), palette.leaves)
+			stalk.CanCollide = false
+			local head = part("FenReedHead", Vector3.new(0.45, 0.8, 0.45), stalk.CFrame * CFrame.new(0, 1.45, 0), palette.earth)
+			head.CanCollide = false
+		end
+	end
+	part("FenCampAwning", Vector3.new(12, 0.35, 9), CFrame.new(-29, 9, -294) * CFrame.Angles(0, 0, math.rad(6)), Color3.fromRGB(132, 145, 118), Enum.Material.Fabric)
+	for _, x in { -34, -24 } do
+		for _, z in { -297, -291 } do
+			part("FenCampPost", Vector3.new(0.4, 5, 0.4), CFrame.new(x, 6.5, z), palette.wood)
+		end
+	end
+	part("FenSupplyCrate", Vector3.new(2.4, 2.3, 2.4), CFrame.new(-29, 5.15, -296), palette.woodLight, Enum.Material.WoodPlanks)
+	-- A ruined watchtower is framed by the ridge instead of another floating island.
+	part("OldwatchFoundation", Vector3.new(13, 0.5, 13), CFrame.new(218, 4.25, -191), palette.stone, Enum.Material.Slate)
+	for _, side in { -1, 1 } do
+		for _, endZ in { -1, 1 } do
+			local height = if side == endZ then 18 else 12
+			part("OldwatchPillar", Vector3.new(2.3, height, 2.3), CFrame.new(218 + side * 5, 4 + height / 2, -191 + endZ * 5), palette.stoneLight, Enum.Material.Slate)
+		end
+	end
+	part("OldwatchArchBeam", Vector3.new(12.5, 2.1, 2.3), CFrame.new(218, 16.5, -186), palette.stone)
+	part("OldwatchBrokenWall", Vector3.new(12.5, 5, 1), CFrame.new(218, 6.5, -196), palette.stone)
+	-- A windmill and small crop beds give the southern meadow a lived-in horizon.
+	part("SunmeadowMill", Vector3.new(8, 15, 8), CFrame.new(85, 11.5, 242), palette.cream)
+	part("MillRoof", Vector3.new(10, 2.5, 10), CFrame.new(85, 20, 242) * CFrame.Angles(0, math.rad(45), 0), palette.roof)
+	for _, rotation in { 35, 125 } do
+		local blade = part("MillSail", Vector3.new(0.55, 15, 1.3), CFrame.new(85, 15.2, 237.3) * CFrame.Angles(0, 0, math.rad(rotation)), palette.woodLight, Enum.Material.Wood)
+		blade.CanCollide = false
+	end
+	part("MillDoor", Vector3.new(3, 4.5, 0.1), CFrame.new(85, 6.25, 237.92), palette.wood)
+	for row = 1, 4 do
+		part("MeadowCropBed", Vector3.new(20, 0.18, 2), CFrame.new(112, 4.09, 232 + row * 4), palette.earth, Enum.Material.Ground)
+		for index = 1, 5 do
+			local crop = part("MeadowCrop", Vector3.new(1.7, 1.3, 1.1), CFrame.new(102 + index * 3.2, 4.65, 232 + row * 4), palette.grassLight)
+			crop.CanCollide = false
+		end
+	end
+
 	local random = Random.new(52719)
 	local trees = 0
-	for _ = 1, 240 do
-		if trees >= 40 then
+	for _ = 1, 1200 do
+		if trees >= 140 then
 			break
 		end
-		local x, z = random:NextNumber(-82, 95), random:NextNumber(-133, 76)
+		local x, z = random:NextNumber(-246, 262), random:NextNumber(-320, 262)
 		if clearForScenery(x, z) then
-			tree(x, z, random:NextNumber(0.7, 1.1), z < -45)
+			tree(x, z, random:NextNumber(0.8, 1.3), z < -115 or x < -90)
 			trees += 1
 		end
 	end
-	for index = 1, 26 do
-		local x, z = random:NextNumber(-68, 86), random:NextNumber(-113, 62)
+	local rocks = 0
+	for index = 1, 110 do
+		if rocks >= 65 then break end
+		local x, z = random:NextNumber(-241, 257), random:NextNumber(-315, 257)
 		if clearForScenery(x, z) then
+			rocks += 1
 			local rockSize = random:NextNumber(1.2, 2.8)
 			part("MeadowRock", Vector3.new(rockSize * 1.3, rockSize, rockSize), CFrame.new(x, 4 + rockSize * 0.35, z) * CFrame.Angles(math.rad(15), random:NextNumber(0, math.pi), math.rad(20)), palette.stone)
 			if index % 2 == 0 then
@@ -1896,9 +2530,12 @@ function WorldBuilder.build(): World
 			end
 		end
 	end
-	for _ = 1, 22 do
-		local x, z = random:NextNumber(-60, 78), random:NextNumber(-105, 58)
+	local flowerPatches = 0
+	for _ = 1, 65 do
+		if flowerPatches >= 30 then break end
+		local x, z = random:NextNumber(-237, 253), random:NextNumber(-307, 250)
 		if clearForScenery(x, z) then
+			flowerPatches += 1
 			for flowerIndex = 1, 3 do
 				local offset = Vector3.new((flowerIndex - 2) * 0.5, 0, flowerIndex % 2 * 0.6)
 				part("MeadowFlower", Vector3.new(0.55, 0.3, 0.55), CFrame.new(Vector3.new(x, 4.3, z) + offset) * CFrame.Angles(0, math.rad(45), 0), if flowerIndex == 2 then Color3.fromRGB(237, 205, 141) else Color3.fromRGB(218, 183, 195))
@@ -1947,6 +2584,13 @@ function WorldBuilder.build(): World
 	world:SetAttribute("PrototypeGeometry", true)
 	world:SetAttribute("RegionName", "Greywater Reach")
 	world:SetAttribute("TravelImplemented", false)
+	world:SetAttribute("PlayableWidth", meadowWidth)
+	world:SetAttribute("PlayableDepth", meadowDepth)
+	world:SetAttribute("PlayableArea", meadowWidth * meadowDepth)
+	world:SetAttribute("PreviousPlayableArea", 220 * 260)
+	world:SetAttribute("AreaMultiplier", meadowWidth * meadowDepth / (220 * 260))
+	world:SetAttribute("EnemySpawnCount", #CombatRules.foes)
+	world:SetAttribute("SubregionCount", #regionLandmarks + 1)
 
 	return {
 		prompts = prompts,
@@ -1960,23 +2604,24 @@ return WorldBuilder
       </Item>
     </Item>
   </Item>
-  <Item class="SoundService" referent="11">
+  <Item class="SoundService" referent="14">
     <Properties>
       <string name="Name">SoundService</string>
       <bool name="RespectFilteringEnabled">true</bool>
     </Properties>
   </Item>
-  <Item class="StarterPlayer" referent="12">
+  <Item class="StarterPlayer" referent="15">
     <Properties>
       <string name="Name">StarterPlayer</string>
       <float name="CharacterJumpHeight">7.2</float>
       <float name="CharacterWalkSpeed">20</float>
+      <bool name="EnableMouseLockOption">false</bool>
     </Properties>
-    <Item class="StarterCharacterScripts" referent="13">
+    <Item class="StarterCharacterScripts" referent="16">
       <Properties>
         <string name="Name">StarterCharacterScripts</string>
       </Properties>
-      <Item class="Script" referent="14">
+      <Item class="Script" referent="17">
         <Properties>
           <string name="Name">Health</string>
           <token name="RunContext">0</token>
@@ -1986,11 +2631,11 @@ return WorldBuilder
         </Properties>
       </Item>
     </Item>
-    <Item class="StarterPlayerScripts" referent="15">
+    <Item class="StarterPlayerScripts" referent="18">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="LocalScript" referent="16">
+      <Item class="LocalScript" referent="19">
         <Properties>
           <string name="Name">WildbondClient</string>
           <string name="Source"><![CDATA[--!nonstrict
@@ -2000,6 +2645,7 @@ local shared = ReplicatedStorage:WaitForChild("Wildbond")
 local Expedition = require(shared:WaitForChild("Expedition"))
 local CombatRules = require(shared:WaitForChild("CombatRules"))
 local DodgeRules = require(shared:WaitForChild("DodgeRules"))
+local PetRules = require(shared:WaitForChild("PetRules"))
 local Hud = require(script:WaitForChild("Hud"))
 local CompanionView = require(script:WaitForChild("CompanionView"))
 local EnemyView = require(script:WaitForChild("EnemyView"))
@@ -2019,7 +2665,7 @@ end)
 local effectConnection = effect.OnClientEvent:Connect(function(kind, position, hit)
 	if kind == "bond" and typeof(position) == "Vector3" then
 		animateBond(position)
-		hud:bondAccepted(CombatRules.petCooldown)
+		hud:bondAccepted(PetRules.skillCooldown)
 	elseif kind == "melee" and typeof(position) == "Vector3" then
 		animateMelee(position, hit == true, if hit == true then CombatRules.meleeDamage else 0)
 		hud:meleeAccepted(CombatRules.meleeCooldown)
@@ -2040,210 +2686,239 @@ script.Destroying:Connect(function()
 end)
 ]]></string>
         </Properties>
-        <Item class="ModuleScript" referent="17">
+        <Item class="ModuleScript" referent="20">
           <Properties>
             <string name="Name">CompanionView</string>
             <string name="Source"><![CDATA[--!strict
--- A local visual companion; rewards and ownership are always server concerns.
+-- Pet positions, health and actions come from the server. These anchored parts
+-- articulate the replicated actor and never select or damage foes.
 local RunService = game:GetService("RunService")
-
 local CompanionView = {}
 
-type Piece = {
-	part: BasePart,
-	offset: CFrame,
-	legPhase: number?,
+type Piece = { part: BasePart, offset: CFrame, phase: number?, role: string }
+type Pet = {
+	actor: Model, visual: Model, pieces: { Piece }, petId: string?, frame: CFrame?, phase: number,
+	state: string, changedAt: number, label: TextLabel?, fill: Frame?, billboard: BillboardGui?,
 }
+type FolderWatch = { active: boolean, connections: { RBXScriptConnection } }
+local names: { [string]: string } = { mosswolf = "Moss Wolf", emberfox = "Ember Fox", tidecub = "Tide Cub" }
+
+local function disconnect(connections: { RBXScriptConnection })
+	for _, connection in connections do connection:Disconnect() end
+	table.clear(connections)
+end
+
+local function piece(pet: Pet, name: string, size: Vector3, offset: CFrame, color: Color3, role: string?, phase: number?, wedge: boolean?): BasePart
+	local part = (if wedge then Instance.new("WedgePart") else Instance.new("Part")) :: BasePart
+	part.Name, part.Size, part.Color, part.Material = name, size, color, Enum.Material.SmoothPlastic
+	part.Anchored, part.CanCollide, part.CanTouch, part.CanQuery = true, false, false, false
+	part.Parent = pet.visual
+	table.insert(pet.pieces, { part = part, offset = offset, phase = phase, role = role or "body" })
+	return part
+end
+
+local function build(pet: Pet, petId: string, localOwner: boolean)
+	pet.visual:ClearAllChildren()
+	table.clear(pet.pieces)
+	pet.petId = petId
+	pet.visual:SetAttribute("PetId", petId)
+	pet.visual:SetAttribute("OwnerUserId", pet.actor:GetAttribute("OwnerUserId"))
+	local fox, cub = petId == "emberfox", petId == "tidecub"
+	local fur = if fox then Color3.fromRGB(196, 115, 67) elseif cub then Color3.fromRGB(129, 180, 197) else Color3.fromRGB(222, 230, 220)
+	local shadow = if fox then Color3.fromRGB(89, 70, 65) elseif cub then Color3.fromRGB(104, 146, 169) else Color3.fromRGB(176, 192, 189)
+	local cream = if fox then Color3.fromRGB(238, 219, 177) else shadow
+	local accent = if fox then Color3.fromRGB(239, 205, 133) elseif cub then Color3.fromRGB(178, 210, 221) else Color3.fromRGB(139, 174, 116)
+	local body = piece(pet, "Body", if cub then Vector3.new(1.5, 1.1, 1.6) else Vector3.new(1.25, 0.95, 2), CFrame.identity, fur)
+	pet.visual.PrimaryPart = body
+	piece(pet, "ChestRuff", if cub then Vector3.new(1.4, 1.05, 0.7) else Vector3.new(1.4, 1.12, 0.8), CFrame.new(0, 0.1, -0.7) * CFrame.Angles(math.rad(-8), 0, 0), if fox then cream else fur)
+	piece(pet, "Head", if cub then Vector3.new(1.2, 0.95, 0.9) else Vector3.new(0.95, 0.85, 0.95), CFrame.new(0, 0.45, -1.25), fur, "head")
+	piece(pet, "Muzzle", if cub then Vector3.new(0.72, 0.32, 0.4) else Vector3.new(0.65, 0.32, 0.65), CFrame.new(0, 0.28, if cub then -1.78 else -1.92), cream, "head")
+	piece(pet, "Jaw", if cub then Vector3.new(0.63, 0.18, 0.45) else Vector3.new(0.56, 0.18, 0.7), CFrame.new(0, 0.06, if cub then -1.77 else -1.91), shadow, "jaw")
+	piece(pet, "Nose", Vector3.new(0.25, 0.2, 0.16), CFrame.new(0, 0.32, if cub then -2.02 else -2.29), Color3.fromRGB(43, 54, 57), "head")
+	for _, side in { -1, 1 } do
+		local ear = piece(pet, "Ear", if fox then Vector3.new(0.45, 0.95, 0.42) elseif cub then Vector3.new(0.46, 0.46, 0.4) else Vector3.new(0.32, 0.68, 0.4), CFrame.new(side * (if cub then 0.5 else 0.34), if fox then 1.15 else 1.05, -1.15) * CFrame.Angles(0, 0, math.rad(-side * 12)), shadow, "head", nil, not cub)
+		if cub and ear:IsA("Part") then ear.Shape = Enum.PartType.Ball end
+		piece(pet, "Eye", Vector3.new(0.08, 0.13, 0.17), CFrame.new(side * (if cub then 0.61 else 0.48), 0.53, -1.56), Color3.fromRGB(47, 72, 83), "head")
+		for _, z in { -0.63, 0.7 } do
+			local phase = if (side == -1 and z < 0) or (side == 1 and z > 0) then 0 else math.pi
+			piece(pet, "Leg", if cub then Vector3.new(0.43, 0.77, 0.45) else Vector3.new(0.32, 0.92, 0.38), CFrame.new(side * (if cub then 0.53 else 0.46), if cub then -0.96 else -0.84, z), shadow, if z < 0 then "frontLeg" else "backLeg", phase)
+		end
+	end
+	piece(pet, "Tail", if fox then Vector3.new(0.68, 0.65, 1.6) elseif cub then Vector3.new(0.48, 0.45, 0.5) else Vector3.new(0.4, 0.42, 1.22), CFrame.new(0, 0.15, if cub then 1 else 1.37) * CFrame.Angles(math.rad(-23), 0, 0), fur, "tail")
+	if fox then piece(pet, "FoxTailTip", Vector3.new(0.7, 0.67, 0.5), CFrame.new(0, 0.45, 2.08) * CFrame.Angles(math.rad(-23), 0, 0), cream, "tail") end
+	piece(pet, "TrailScarf", Vector3.new(1.43, 0.26, 0.33), CFrame.new(0, 0.3, -0.9), accent)
+	piece(pet, "ScarfKnot", Vector3.new(0.25, 0.6, 0.25), CFrame.new(0.64, 0.02, -0.97) * CFrame.Angles(0, 0, math.rad(-15)), accent)
+	for index = 1, 6 do
+		local spark = piece(pet, "SkillSpark", Vector3.new(0.16, 0.42, 0.16), CFrame.identity, accent, "spark", index * math.pi / 3)
+		spark.Material, spark.Transparency = Enum.Material.Neon, 1
+	end
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name, billboard.Adornee = "PetHealth", body
+	billboard.Size, billboard.StudsOffset = UDim2.fromOffset(170, 42), Vector3.new(0, 2.2, 0)
+	billboard.AlwaysOnTop, billboard.MaxDistance, billboard.Parent = true, if localOwner then 85 else 55, pet.visual
+	local label = Instance.new("TextLabel")
+	label.Name, label.Size, label.BackgroundTransparency = "HealthLabel", UDim2.new(1, 0, 0, 25), 1
+	label.Font, label.TextSize, label.TextColor3 = Enum.Font.GothamMedium, 12, Color3.fromRGB(244, 247, 237)
+	label.TextStrokeColor3, label.TextStrokeTransparency, label.Parent = Color3.fromRGB(30, 44, 38), 0.35, billboard
+	local bar = Instance.new("Frame")
+	bar.Name, bar.Position, bar.Size = "HealthBar", UDim2.new(0.12, 0, 0, 28), UDim2.new(0.76, 0, 0, 5)
+	bar.BackgroundColor3, bar.BorderSizePixel, bar.Parent = Color3.fromRGB(38, 48, 45), 0, billboard
+	local fill = Instance.new("Frame")
+	fill.Name, fill.Size, fill.BorderSizePixel = "Fill", UDim2.fromScale(1, 1), 0
+	fill.BackgroundColor3, fill.Parent = if localOwner then Color3.fromRGB(140, 220, 159) else Color3.fromRGB(149, 195, 218), bar
+	pet.billboard, pet.label, pet.fill = billboard, label, fill
+end
+
+local function animate(pet: Pet, dt: number, now: number, container: Folder, player: Player)
+	local root, petId = pet.actor.PrimaryPart, pet.actor:GetAttribute("PetId")
+	local owner = pet.actor:GetAttribute("OwnerUserId")
+	local health, maxHealth = pet.actor:GetAttribute("Health"), pet.actor:GetAttribute("MaxHealth")
+	if not root or not root:IsDescendantOf(pet.actor) or typeof(petId) ~= "string" or not names[petId]
+		or typeof(owner) ~= "number" or typeof(health) ~= "number" or typeof(maxHealth) ~= "number" or maxHealth <= 0 then
+		pet.visual.Parent, pet.frame = nil, nil
+		return
+	end
+	if pet.petId ~= petId or pet.visual:GetAttribute("OwnerUserId") ~= owner then build(pet, petId, owner == player.UserId) end
+	pet.visual.Parent = container
+	local previous = pet.frame or root.CFrame
+	local frame = if (previous.Position - root.CFrame.Position).Magnitude > 40 then root.CFrame
+		else previous:Lerp(root.CFrame, 1 - math.exp(-math.min(dt, 0.1) * 16))
+	local speed = ((frame.Position - previous.Position) * Vector3.new(1, 0, 1)).Magnitude / math.max(dt, 0.001)
+	pet.frame = frame
+	local serverState = pet.actor:GetAttribute("State")
+	local state = if health == 0 then "Dead" elseif typeof(serverState) == "string" then serverState else "Follow"
+	if state ~= pet.state then pet.state, pet.changedAt = state, now end
+	local started, duration = pet.actor:GetAttribute("ActionStartedAt"), pet.actor:GetAttribute("ActionDuration")
+	-- State and HP can arrive in separate replication updates. A premature
+	-- Follow timestamp must not restart the death fade while HP is still zero.
+	local actionStart = if state == "Dead" and serverState ~= "Dead" then pet.changedAt
+		elseif typeof(started) == "number" then started else pet.changedAt
+	local elapsed = now - actionStart
+	local progress = math.clamp(elapsed / (if typeof(duration) == "number" and duration > 0 then duration else 0.5), 0, 1)
+	local dead = if state == "Dead" then math.clamp(elapsed / 0.45, 0, 1) else 0
+	local skill, attack = state == "Skill", state == "Attack"
+	local windup = if attack or skill then math.clamp(progress / 0.3, 0, 1) * (1 - math.clamp((progress - 0.3) / 0.16, 0, 1)) else 0
+	local strike = if attack or skill then math.sin(math.clamp((progress - 0.3) / 0.7, 0, 1) * math.pi) else 0
+	local target = pet.actor:GetAttribute("AttackTarget")
+	if (attack or skill) and typeof(target) == "Vector3" then
+		local direction = (target - frame.Position) * Vector3.new(1, 0, 1)
+		if direction.Magnitude > 0.01 then frame = CFrame.lookAt(frame.Position, frame.Position + direction.Unit) end
+	end
+	local gait = if state == "Follow" then math.clamp(speed / 16, 0, 1) else 0
+	pet.phase += math.min(dt, 0.1) * (5 + math.min(speed, 22))
+	local bob = math.sin(pet.phase * 2) * 0.045 * gait
+	local lift = if skill then strike * 0.85 elseif attack then strike * 0.22 else 0
+	local pose = frame * CFrame.new(0, bob + lift - dead * 0.9, windup * 0.18 - strike * (if skill then 1.1 else 0.5))
+		* CFrame.Angles(windup * 0.08 - strike * 0.1, 0, dead * 1.1)
+	for _, item in pet.pieces do
+		local offset = item.offset
+		if item.role == "spark" then
+			local angle = (item.phase or 0) + progress * math.pi * 2
+			offset = CFrame.new(math.cos(angle) * (1.2 + strike * 0.5), 0.2 + strike * 0.7, math.sin(angle) * 1.7)
+				* CFrame.Angles(0.4, angle, -0.6)
+			item.part.Transparency = if skill and progress > 0 and progress < 1 then 0.15 + 0.85 * (1 - strike) else 1
+		elseif item.phase then
+			local swing = math.sin(pet.phase + item.phase) * 0.35 * gait
+			if item.role == "frontLeg" then swing += windup * 0.18 - strike * (if skill then 0.7 else 0.25)
+			else swing += strike * 0.28 end
+			local hip = Vector3.new(offset.X, -0.38, offset.Z)
+			offset = CFrame.new(hip) * CFrame.Angles(swing, 0, 0) * CFrame.new(-hip) * offset
+		elseif item.role == "head" or item.role == "jaw" then
+			local neck = Vector3.new(0, 0.3, -0.85)
+			offset = CFrame.new(neck) * CFrame.Angles(-windup * 0.16 + strike * 0.2, 0, 0) * CFrame.new(-neck) * offset
+			if item.role == "jaw" then
+				local hinge = Vector3.new(0, 0.13, -1.55)
+				offset = CFrame.new(hinge) * CFrame.Angles(-(windup * 0.42 + strike * 0.16), 0, 0) * CFrame.new(-hinge) * offset
+			end
+		elseif item.role == "tail" then
+			offset *= CFrame.Angles(0, math.sin(pet.phase * 0.55) * 0.09 * (1 - strike), windup * 0.14)
+		end
+		if item.role ~= "spark" then item.part.Transparency = dead end
+		item.part.CFrame = pose * offset
+	end
+	local billboard, label, fill = pet.billboard, pet.label, pet.fill
+	if billboard and label and fill then
+		billboard.Enabled = state ~= "Dead" and typeof(health) == "number" and typeof(maxHealth) == "number" and maxHealth > 0
+		if typeof(health) == "number" and typeof(maxHealth) == "number" and maxHealth > 0 then
+			label.Text = string.format("%s  %d / %d", names[petId], math.ceil(math.max(0, health)), math.ceil(maxHealth))
+			fill.Size = UDim2.fromScale(math.clamp(health / maxHealth, 0, 1), 1)
+		end
+	end
+end
 
 function CompanionView.start(player: Player): (() -> (), (Vector3) -> ())
-	local model = Instance.new("Model")
-	model.Name = "LocalTrailCompanion"
-	model:SetAttribute("CosmeticOnly", true)
-	model.Parent = workspace
-	local pieces: { Piece } = {}
-	local bodyHeight = 1.1
-	local strike: { origin: CFrame, target: CFrame, elapsed: number }? = nil
-
-	local function piece(name: string, size: Vector3, offset: CFrame, color: Color3, legPhase: number?, wedge: boolean?): BasePart
-		local bodyPart = (if wedge then Instance.new("WedgePart") else Instance.new("Part")) :: BasePart
-		bodyPart.Name = name
-		bodyPart.Size = size
-		bodyPart.Color = color
-		bodyPart.Material = Enum.Material.SmoothPlastic
-		bodyPart.Anchored = true
-		bodyPart.CanCollide = false
-		bodyPart.CanTouch = false
-		bodyPart.CanQuery = false
-		bodyPart.Parent = model
-		table.insert(pieces, { part = bodyPart, offset = offset, legPhase = legPhase })
-		return bodyPart
-	end
-
-	local function buildCompanion()
-		strike = nil
-		model:ClearAllChildren()
-		table.clear(pieces)
-		local selected = player:GetAttribute("CompanionId")
-		local isFox = selected == "emberfox"
-		local isCub = selected == "tidecub"
-		local fur = if isFox then Color3.fromRGB(196, 115, 67) elseif isCub then Color3.fromRGB(129, 180, 197) else Color3.fromRGB(222, 230, 220)
-		local shadowFur = if isFox then Color3.fromRGB(89, 70, 65) elseif isCub then Color3.fromRGB(104, 146, 169) else Color3.fromRGB(176, 192, 189)
-		local accent = if isFox then Color3.fromRGB(239, 205, 133) elseif isCub then Color3.fromRGB(178, 210, 221) else Color3.fromRGB(139, 174, 116)
-		bodyHeight = if isCub then 0.95 else 1.1
-		model:SetAttribute("CompanionId", if isFox then "emberfox" elseif isCub then "tidecub" else "mosswolf")
-		local body = piece("Body", if isCub then Vector3.new(1.5, 1.1, 1.6) else Vector3.new(1.25, 0.95, 2), CFrame.identity, fur)
-		model.PrimaryPart = body
-		piece("ChestRuff", if isCub then Vector3.new(1.4, 1.05, 0.7) else Vector3.new(1.4, 1.12, 0.8), CFrame.new(0, 0.1, -0.7) * CFrame.Angles(math.rad(-8), 0, 0), if isFox then Color3.fromRGB(238, 219, 177) else fur)
-		piece("Head", if isCub then Vector3.new(1.2, 0.95, 0.9) else Vector3.new(0.95, 0.85, 0.95), CFrame.new(0, 0.45, -1.25), fur)
-		piece("Muzzle", if isCub then Vector3.new(0.72, 0.4, 0.4) else Vector3.new(0.65, 0.4, 0.65), CFrame.new(0, 0.2, if isCub then -1.78 else -1.92), if isFox then Color3.fromRGB(238, 219, 177) else shadowFur)
-		piece("Nose", Vector3.new(0.25, 0.2, 0.16), CFrame.new(0, 0.3, if isCub then -2.02 else -2.29), Color3.fromRGB(43, 54, 57))
-		for _, side in { -1, 1 } do
-			local ear = piece("Ear", if isFox then Vector3.new(0.45, 0.95, 0.42) elseif isCub then Vector3.new(0.46, 0.46, 0.4) else Vector3.new(0.32, 0.68, 0.4), CFrame.new(side * (if isCub then 0.5 else 0.34), if isFox then 1.15 else 1.05, -1.15) * CFrame.Angles(0, 0, math.rad(-side * 12)), shadowFur, nil, not isCub)
-			if isCub and ear:IsA("Part") then
-				ear.Shape = Enum.PartType.Ball
-			end
-			piece("Eye", Vector3.new(0.08, 0.13, 0.17), CFrame.new(side * (if isCub then 0.61 else 0.48), 0.53, -1.56), Color3.fromRGB(47, 72, 83))
-			for _, endZ in { -0.63, 0.7 } do
-				local phase = if (side == -1 and endZ < 0) or (side == 1 and endZ > 0) then 0 else math.pi
-				piece("Leg", if isCub then Vector3.new(0.43, 0.52, 0.45) else Vector3.new(0.32, 0.69, 0.38), CFrame.new(side * (if isCub then 0.53 else 0.46), if isCub then -0.6 else -0.68, endZ), shadowFur, phase)
-			end
-		end
-		piece("Tail", if isFox then Vector3.new(0.68, 0.65, 1.6) elseif isCub then Vector3.new(0.48, 0.45, 0.5) else Vector3.new(0.4, 0.42, 1.22), CFrame.new(0, 0.15, if isCub then 1 else 1.37) * CFrame.Angles(math.rad(-23), 0, 0), fur)
-		if isFox then
-			piece("FoxTailTip", Vector3.new(0.7, 0.67, 0.5), CFrame.new(0, 0.45, 2.08) * CFrame.Angles(math.rad(-23), 0, 0), Color3.fromRGB(238, 219, 177))
-		end
-		piece("TrailScarf", Vector3.new(1.43, 0.26, 0.33), CFrame.new(0, 0.3, -0.9), accent)
-		piece("ScarfKnot", Vector3.new(0.25, 0.6, 0.25), CFrame.new(0.64, 0.02, -0.97) * CFrame.Angles(0, 0, math.rad(-15)), accent)
-	end
-	buildCompanion()
-
-	local character = player.Character
-	local raycastParameters = RaycastParams.new()
-	raycastParameters.FilterType = Enum.RaycastFilterType.Exclude
-	local function setCharacter(newCharacter: Model)
-		strike = nil
-		character = newCharacter
-		raycastParameters.FilterDescendantsInstances = { model, newCharacter }
-	end
-	if character then
-		setCharacter(character)
-	else
-		raycastParameters.FilterDescendantsInstances = { model }
-	end
-
-	local currentFrame: CFrame? = nil
-	local floorY = 4
-	local floorTimer = 0
-	local elapsed = 0
+	local container = Instance.new("Folder")
+	container.Name, container.Parent = "LocalCompanionVisuals", workspace
+	container:SetAttribute("CosmeticOnly", true)
+	local pets: { [Model]: Pet } = {}
+	local folders: { [Instance]: FolderWatch } = {}
 	local stopped = false
-	local companionConnection = player:GetAttributeChangedSignal("CompanionId"):Connect(buildCompanion)
-	local addedConnection = player.CharacterAdded:Connect(function(newCharacter: Model)
-		setCharacter(newCharacter)
-		currentFrame = nil
-		floorTimer = 0
-	end)
-	local removedConnection = player.CharacterRemoving:Connect(function(oldCharacter: Model)
-		if character == oldCharacter then
-			strike = nil
-			character = nil
-			currentFrame = nil
-			model.Parent = nil
-		end
-	end)
-
-	local renderConnection = RunService.RenderStepped:Connect(function(dt: number)
-		local activeCharacter = character
-		if stopped or not activeCharacter then
-			return
-		end
-		local root = activeCharacter:FindFirstChild("HumanoidRootPart")
-		if not root or not root:IsA("BasePart") then
-			return
-		end
-		if not model.Parent then
-			model.Parent = workspace
-		end
-		local desired = (root.CFrame * CFrame.new(3.2, 0, 3.6)).Position
-		floorTimer -= dt
-		if floorTimer <= 0 then
-			floorTimer = 0.12
-			local ground = workspace:Raycast(desired + Vector3.new(0, 6, 0), Vector3.new(0, -32, 0), raycastParameters)
-			floorY = if ground then ground.Position.Y else root.Position.Y - 3
-		end
-		local target = Vector3.new(desired.X, floorY + bodyHeight, desired.Z)
-		local oldFrame = currentFrame
-		if not oldFrame or (oldFrame.Position - target).Magnitude > 40 then
-			local forward = root.CFrame.LookVector * Vector3.new(1, 0, 1)
-			if forward.Magnitude < 0.01 then
-				forward = Vector3.new(0, 0, -1)
-			end
-			oldFrame = CFrame.lookAt(target, target + forward)
-		end
-		local alpha = 1 - math.exp(-math.min(dt, 0.1) * 8)
-		local newPosition = oldFrame.Position:Lerp(target, alpha)
-		local movement = (newPosition - oldFrame.Position) * Vector3.new(1, 0, 1)
-		local direction = if movement.Magnitude > 0.025 then movement.Unit else root.CFrame.LookVector * Vector3.new(1, 0, 1)
-		if direction.Magnitude < 0.01 then
-			direction = Vector3.new(0, 0, -1)
-		end
-		local heading = oldFrame:Lerp(CFrame.lookAt(newPosition, newPosition + direction), alpha)
-		local newFrame = CFrame.new(newPosition) * heading.Rotation
-		local activeStrike = strike
-		if activeStrike then
-			activeStrike.elapsed += math.min(dt, 0.1)
-			local time = activeStrike.elapsed
-			if time < 0.2 then
-				local progress = time / 0.2
-				local approach = activeStrike.origin:Lerp(activeStrike.target, progress)
-				newFrame = approach + Vector3.new(0, math.sin(progress * math.pi) * 1.1, 0)
-			elseif time < 0.3 then
-				newFrame = activeStrike.target
-			elseif time < 0.45 then
-				-- Return toward the live character, even if they moved during the pounce.
-				local returnFrame = CFrame.lookAt(target, target + direction)
-				newFrame = activeStrike.target:Lerp(returnFrame, (time - 0.3) / 0.15)
-			else
-				strike = nil
-				newFrame = CFrame.lookAt(target, target + direction)
-			end
-		end
-		currentFrame = newFrame
-		local speed = movement.Magnitude / math.max(dt, 0.001)
-		local gaitAmount = math.clamp(speed / 12, 0, 1)
-		elapsed += math.min(dt, 0.1) * (8 + math.min(speed, 12))
-		for _, wolfPiece in pieces do
-			local offset = wolfPiece.offset
-			local phase = wolfPiece.legPhase
-			if phase then
-				local stride = math.sin(elapsed + phase) * 0.18 * gaitAmount
-				local lift = math.max(0, math.cos(elapsed + phase)) * 0.13 * gaitAmount
-				offset *= CFrame.new(0, lift, stride) * CFrame.Angles(stride * 2, 0, 0)
-			end
-			wolfPiece.part.CFrame = newFrame * offset
-		end
-	end)
-
-	local function strikeAt(targetPosition: Vector3)
-		if stopped or not character or not currentFrame or typeof(targetPosition) ~= "Vector3" then return end
-		if targetPosition.X ~= targetPosition.X or targetPosition.Y ~= targetPosition.Y or targetPosition.Z ~= targetPosition.Z
-			or math.abs(targetPosition.X) == math.huge or math.abs(targetPosition.Y) == math.huge or math.abs(targetPosition.Z) == math.huge then return end
-		local direction = (targetPosition - currentFrame.Position) * Vector3.new(1, 0, 1)
-		if direction.Magnitude < 0.01 or direction.Magnitude > 40 then return end
-		local destination = Vector3.new(targetPosition.X, currentFrame.Position.Y, targetPosition.Z) - direction.Unit * 2.2
-		strike = { origin = currentFrame, target = CFrame.lookAt(destination, destination + direction.Unit), elapsed = 0 }
+	local function removePet(item: Instance)
+		if not item:IsA("Model") then return end
+		local pet = pets[item]
+		if not pet then return end
+		pet.visual:Destroy()
+		pets[item] = nil
 	end
+	local function addPet(item: Instance)
+		if stopped or not item:IsA("Model") or pets[item] then return end
+		local visual = Instance.new("Model")
+		visual.Name, visual.Parent = item.Name, container
+		visual:SetAttribute("CosmeticOnly", true)
+		pets[item] = { actor = item, visual = visual, pieces = {}, petId = nil, frame = nil, phase = 0, state = "", changedAt = 0,
+			label = nil, fill = nil, billboard = nil }
+	end
+	local function detach(folder: Instance, watch: FolderWatch)
+		for _, child in folder:GetChildren() do removePet(child) end
+		for model in pets do if model.Parent == folder then removePet(model) end end
+		for index = #watch.connections, 2, -1 do watch.connections[index]:Disconnect(); table.remove(watch.connections, index) end
+		watch.active = false
+	end
+	local function refreshFolder(folder: Instance, watch: FolderWatch)
+		local active = not stopped and folder.Parent == workspace and folder.Name == "WildbondCompanions"
+		if watch.active and not active then detach(folder, watch) end
+		if active and not watch.active then
+			watch.active = true
+			table.insert(watch.connections, folder.ChildAdded:Connect(addPet))
+			table.insert(watch.connections, folder.ChildRemoved:Connect(removePet))
+			for _, child in folder:GetChildren() do addPet(child) end
+		end
+	end
+	local function watchFolder(folder: Instance)
+		if stopped or folder == container or not folder:IsA("Folder") or folders[folder] then return end
+		local watch: FolderWatch = { active = false, connections = {} }
+		folders[folder] = watch
+		table.insert(watch.connections, folder:GetPropertyChangedSignal("Name"):Connect(function() refreshFolder(folder, watch) end))
+		refreshFolder(folder, watch)
+	end
+	local function removeFolder(folder: Instance)
+		local watch = folders[folder]
+		if not watch then return end
+		if watch.active then detach(folder, watch) end
+		disconnect(watch.connections)
+		folders[folder] = nil
+	end
+	for _, folder in workspace:GetChildren() do watchFolder(folder) end
+	local added, removed = workspace.ChildAdded:Connect(watchFolder), workspace.ChildRemoved:Connect(removeFolder)
+	local render = RunService.RenderStepped:Connect(function(dt: number)
+		local now = workspace:GetServerTimeNow()
+		for model, pet in pets do
+			local parent = model.Parent
+			if parent and folders[parent] and folders[parent].active then animate(pet, dt, now, container, player)
+			else removePet(model) end
+		end
+	end)
 	local function cleanup()
-		if stopped then
-			return
-		end
+		if stopped then return end
 		stopped = true
-		strike = nil
-		renderConnection:Disconnect()
-		addedConnection:Disconnect()
-		removedConnection:Disconnect()
-		companionConnection:Disconnect()
-		model:Destroy()
+		render:Disconnect(); added:Disconnect(); removed:Disconnect()
+		for folder in folders do removeFolder(folder) end
+		for model in pets do removePet(model) end
+		container:Destroy()
 	end
+	-- The old manual Bond effect still calls this API. Replicated action timestamps
+	-- drive its animation now, so the callback must not start a second pounce.
+	local function strikeAt(_targetPosition: Vector3) end
 	return cleanup, strikeAt
 end
 
@@ -2251,7 +2926,7 @@ return CompanionView
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="18">
+        <Item class="ModuleScript" referent="21">
           <Properties>
             <string name="Name">EnemyView</string>
             <string name="Source"><![CDATA[--!strict
@@ -2483,7 +3158,7 @@ return EnemyView
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="19">
+        <Item class="ModuleScript" referent="22">
           <Properties>
             <string name="Name">Hud</string>
             <string name="Source"><![CDATA[--!nonstrict
@@ -2539,10 +3214,10 @@ end
 
 function Hud.start(command, catalog, rules, dodgeRules)
 	rules = rules or { meleeCooldown = 0.6, petCooldown = 3.2 }
-	dodgeRules = dodgeRules or { cooldown = 4, doubleTapWindow = 0.28 }
+	dodgeRules = dodgeRules or { cooldown = 4 }
 	local player = Players.LocalPlayer
 	local destroyed = false
-	local currentState, stateClock, refreshTiming, refreshCooldowns
+	local currentState, stateClock, refreshTiming, refreshCooldowns, refreshPet
 	local screen = make("ScreenGui", { Name = "WildbondHUD", ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling }, player:WaitForChild("PlayerGui"))
 	local gui = make("Frame", { Name = "Canvas", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1) }, screen)
 	local scale = make("UIScale", { Scale = 1 }, gui)
@@ -2572,6 +3247,7 @@ function Hud.start(command, catalog, rules, dodgeRules)
 	local resizeClock = 0
 	local resizeConnection = RunService.RenderStepped:Connect(function(dt)
 		if refreshCooldowns then refreshCooldowns() end
+		if refreshPet then refreshPet() end
 		resizeClock += dt
 		if resizeClock >= 1 then
 			resizeClock = 0
@@ -2585,7 +3261,7 @@ function Hud.start(command, catalog, rules, dodgeRules)
 		BackgroundColor3 = ink, BackgroundTransparency = 0.08, BorderSizePixel = 0,
 	}, gui)
 	round(mission, 16)
-	label(mission, "WILDBOND", UDim2.fromOffset(18, 12), UDim2.fromOffset(280, 26), 23, mint)
+	label(mission, "WILDBOND  v0.4.0", UDim2.fromOffset(18, 12), UDim2.fromOffset(280, 26), 23, mint)
 	label(mission, "GREYWATER REACH  /  PVE ALPHA", UDim2.fromOffset(18, 42), UDim2.fromOffset(280, 18), 10)
 	local objective = label(mission, "Find the hunt board in the village.", UDim2.fromOffset(18, 70), UDim2.fromOffset(284, 42), 16)
 	local rows = {}
@@ -2611,10 +3287,37 @@ function Hud.start(command, catalog, rules, dodgeRules)
 		end
 	end
 
-	local purse = make("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -18, 0, 18), Size = UDim2.fromOffset(156, 78), BackgroundColor3 = ink, BorderSizePixel = 0 }, gui)
+	local purse = make("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -18, 0, 18), Size = UDim2.fromOffset(216, 98), BackgroundColor3 = ink, BorderSizePixel = 0 }, gui)
 	round(purse, 14)
-	local shells = label(purse, "0 shells", UDim2.fromOffset(14, 9), UDim2.fromOffset(132, 27), 22, amber)
-	local hunts = label(purse, "0 hunts completed", UDim2.fromOffset(14, 41), UDim2.fromOffset(132, 18), 11)
+	local shells = label(purse, "0 shells", UDim2.fromOffset(14, 9), UDim2.fromOffset(188, 27), 22, amber)
+	local hunts = label(purse, "0 hunts completed", UDim2.fromOffset(14, 41), UDim2.fromOffset(188, 18), 11)
+	local progression = label(purse, "LV 1 · 0 coins · 0 XP", UDim2.fromOffset(14, 67), UDim2.fromOffset(188, 20), 11, mint)
+	local petStatus = make("Frame", { Name = "CompanionStatus", AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -18, 0, 124), Size = UDim2.fromOffset(216, 72), BackgroundColor3 = ink, BorderSizePixel = 0 }, gui)
+	round(petStatus, 12)
+	local petHealth = label(petStatus, "Companion arriving…", UDim2.fromOffset(12, 7), UDim2.fromOffset(192, 18), 12, mint)
+	petHealth.Name = "PetHealth"
+	local petStats = label(petStatus, "", UDim2.fromOffset(12, 27), UDim2.fromOffset(192, 16), 10)
+	petStats.Name = "PetStats"
+	local petMode = label(petStatus, "Auto attack · auto skill", UDim2.fromOffset(12, 47), UDim2.fromOffset(192, 16), 10, amber)
+	petMode.Name = "PetMode"
+	refreshPet = function()
+		local hp, maximum = player:GetAttribute("PetHealth"), player:GetAttribute("PetMaxHealth")
+		local state = player:GetAttribute("PetState")
+		if typeof(hp) ~= "number" or typeof(maximum) ~= "number" then return end
+		petHealth.Text = string.format("Companion %d / %d HP", math.max(0, math.floor(hp)), math.max(1, math.floor(maximum)))
+		petStats.Text = string.format("ATK %d · skill %d · DEF %d", player:GetAttribute("PetAttackDamage") or 0, player:GetAttribute("PetSkillDamage") or 0, player:GetAttribute("PetDefense") or 0)
+		if state == "Dead" then
+			local respawnAt = player:GetAttribute("PetRespawnAt")
+			local remaining = typeof(respawnAt) == "number" and respawnAt > 0 and math.max(0, respawnAt - workspace:GetServerTimeNow()) or nil
+			petMode.Text = if remaining then string.format("Reviving in %.1fs", remaining) else "Leave combat to revive companion"
+			petHealth.TextColor3 = amber
+		else
+			petHealth.TextColor3 = mint
+			local readyAt = player:GetAttribute("PetSkillReadyAt") or 0
+			local remaining = math.max(0, readyAt - workspace:GetServerTimeNow())
+			petMode.Text = if remaining > 0 then string.format("Auto skill %.1fs · %s", remaining, if player:GetAttribute("InCombat") then "in combat" else "following") else "Auto attack · auto skill ready"
+		end
+	end
 
 	local health = make("Frame", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -23), Size = UDim2.fromOffset(220, 14), BackgroundColor3 = ink, BorderSizePixel = 0 }, gui)
 	round(health, 7)
@@ -2659,10 +3362,10 @@ function Hud.start(command, catalog, rules, dodgeRules)
 		end)
 	end
 
-	local petPanel = make("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -18, 0, 160), Size = UDim2.fromOffset(320, 213), BackgroundColor3 = ink, BorderSizePixel = 0, Visible = false }, gui)
+	local petPanel = make("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -18, 0, 252), Size = UDim2.fromOffset(320, 213), BackgroundColor3 = ink, BorderSizePixel = 0, Visible = false }, gui)
 	round(petPanel, 14)
 	label(petPanel, "YOUR COMPANIONS", UDim2.fromOffset(16, 10), UDim2.fromOffset(240, 22), 15, mint)
-	label(petPanel, "Earn shells from hunts · equal combat strength.", UDim2.fromOffset(16, 36), UDim2.fromOffset(288, 20), 11)
+	label(petPanel, "Hunts earn shells · each pet has its own stats.", UDim2.fromOffset(16, 36), UDim2.fromOffset(288, 20), 11)
 	local petButtons = {}
 	for index, pet in catalog do
 		label(petPanel, pet.name, UDim2.fromOffset(16, 66 + (index - 1) * 45), UDim2.fromOffset(160, 34), 14)
@@ -2672,7 +3375,7 @@ function Hud.start(command, catalog, rules, dodgeRules)
 			command:FireServer(action, pet.id)
 		end)
 	end
-	companionToggle = button(gui, "Companions", UDim2.new(1, -174, 0, 105), UDim2.fromOffset(156, 42), function()
+	companionToggle = button(gui, "Companions", UDim2.new(1, -174, 0, 204), UDim2.fromOffset(156, 42), function()
 		petPanel.Visible = not petPanel.Visible
 	end)
 
@@ -2692,7 +3395,7 @@ function Hud.start(command, catalog, rules, dodgeRules)
 	local function bond()
 		if focused() then return end
 		local now = os.clock()
-		if now < bondReadyAt or now - lastBondRequest < 0.2 then return end
+		if player:GetAttribute("PetState") == "Dead" or now < bondReadyAt or workspace:GetServerTimeNow() < (player:GetAttribute("PetSkillReadyAt") or 0) or now - lastBondRequest < 0.2 then return end
 		lastBondRequest = now
 		command:FireServer("bond")
 	end
@@ -2711,7 +3414,7 @@ function Hud.start(command, catalog, rules, dodgeRules)
 		command:FireServer("dodge", direction.Unit)
 	end
 	attackButton = button(gui, "STRIKE", UDim2.new(1, -134, 1, if UserInputService.TouchEnabled then -194 else -96), UDim2.fromOffset(116, 66), attack)
-	bondButton = button(gui, "BOND", UDim2.new(1, -260, 1, if UserInputService.TouchEnabled then -194 else -96), UDim2.fromOffset(116, 66), bond)
+	bondButton = button(gui, "PET SKILL", UDim2.new(1, -260, 1, if UserInputService.TouchEnabled then -194 else -96), UDim2.fromOffset(116, 66), bond)
 	dodgeButton = button(gui, "DODGE", UDim2.new(1, -134, 1, if UserInputService.TouchEnabled then -276 else -174), UDim2.fromOffset(116, 58), dodge)
 	-- Slot 1 is a temporary companion command while class skills are being built.
 	-- Empty slots deliberately have no click or key actions.
@@ -2725,27 +3428,25 @@ function Hud.start(command, catalog, rules, dodgeRules)
 		}, hotbar)
 		round(slot, 10)
 		label(slot, tostring(index), UDim2.fromOffset(6, 3), UDim2.fromOffset(18, 16), 11, if index == 1 then mint else Color3.fromRGB(160, 170, 171))
-		slots[index] = label(slot, if index == 1 then "Bond" else "Unlearned", UDim2.fromOffset(3, 22), UDim2.fromOffset(56, 30), if index == 1 then 13 else 9, if index == 1 then cream else Color3.fromRGB(160, 170, 171))
+		slots[index] = label(slot, if index == 1 then "Pet skill" else "Unlearned", UDim2.fromOffset(3, 22), UDim2.fromOffset(56, 30), if index == 1 then 13 else 9, if index == 1 then cream else Color3.fromRGB(160, 170, 171))
 		if index == 1 then slot.Activated:Connect(bond) end
 	end
 	refreshCooldowns = function()
 		local now = os.clock()
-		for _, entry in { { attackButton, attackReadyAt, "STRIKE" }, { bondButton, bondReadyAt, "BOND" }, { dodgeButton, dodgeReadyAt, "DODGE" } } do
+		for _, entry in { { attackButton, attackReadyAt, "STRIKE" }, { bondButton, bondReadyAt, "PET SKILL" }, { dodgeButton, dodgeReadyAt, "DODGE" } } do
 			local remaining = math.max(0, entry[2] - now)
+			if entry[1] == bondButton then remaining = math.max(remaining, (player:GetAttribute("PetSkillReadyAt") or 0) - workspace:GetServerTimeNow()) end
 			entry[1].Text = if remaining > 0 then string.format("%s %.1f", entry[3], remaining) else entry[3]
 			entry[1].BackgroundColor3 = if remaining > 0 then amber else mint
 		end
-		local remaining = math.max(0, bondReadyAt - now)
-		slots[1].Text = if remaining > 0 then string.format("Bond\n%.1f", remaining) else "Bond"
+		local remaining = math.max(0, bondReadyAt - now, (player:GetAttribute("PetSkillReadyAt") or 0) - workspace:GetServerTimeNow())
+		slots[1].Text = if remaining > 0 then string.format("Pet skill\n%.1f", remaining) else "Pet skill"
 	end
 	resize()
-	local controlsHint = label(gui, "Click / R2 strike · 1 / L2 companion · double Space / B dodge", UDim2.new(0.5, -245, 1, -166), UDim2.fromOffset(490, 20), 10)
+	local controlsHint = label(gui, "Click / R2 strike · 1 / L2 pet skill · Shift / B dodge", UDim2.new(0.5, -245, 1, -166), UDim2.fromOffset(490, 20), 10)
 	controlsHint.TextXAlignment = Enum.TextXAlignment.Center
 	controlsHint.Visible = not UserInputService.TouchEnabled
-	local lastSpace = -math.huge
 	local inputConnection = UserInputService.InputBegan:Connect(function(input, processed)
-		-- ContextActionService alone owns Space history. Roblox's normal jump
-		-- can mark the first tap processed after our action returned Pass.
 		if processed or focused() then return end
 		if input.KeyCode == Enum.KeyCode.ButtonR2 or input.UserInputType == Enum.UserInputType.MouseButton1 then
 			attack()
@@ -2757,23 +3458,14 @@ function Hud.start(command, catalog, rules, dodgeRules)
 			petPanel.Visible = not petPanel.Visible
 		end
 	end)
-	local spaceAction = "WildbondDoubleSpaceDodge"
-	ContextActionService:BindActionAtPriority(spaceAction, function(_, state)
-		if focused() then
-			lastSpace = -math.huge
-			return Enum.ContextActionResult.Pass
-		end
-		if state ~= Enum.UserInputState.Begin then return Enum.ContextActionResult.Pass end
-		local now = os.clock()
-		if now - lastSpace <= (dodgeRules.doubleTapWindow or 0.28) then
-			lastSpace = -math.huge
-			dodge()
-			-- The first tap remains Roblox's normal jump; the second is the dodge.
-			return Enum.ContextActionResult.Sink
-		end
-		lastSpace = now
-		return Enum.ContextActionResult.Pass
-	end, false, Enum.ContextActionPriority.High.Value + 10, Enum.KeyCode.Space)
+	local dodgeAction = "WildbondShiftDodge"
+	ContextActionService:BindActionAtPriority(dodgeAction, function(_, state)
+		if focused() then return Enum.ContextActionResult.Pass end
+		if state == Enum.UserInputState.Begin then dodge() end
+		-- Consume Shift start/end so it cannot toggle Roblox mouse lock.
+		-- Space remains completely unbound and keeps ordinary jumping.
+		return Enum.ContextActionResult.Sink
+	end, false, Enum.ContextActionPriority.High.Value + 10, Enum.KeyCode.LeftShift, Enum.KeyCode.RightShift)
 
 	local waypoint = make("Part", { Name = "LocalHuntWaypoint", Size = Vector3.new(1.2, 8, 1.2), Anchored = true, CanCollide = false, CanTouch = false, CanQuery = false, Material = Enum.Material.Neon, Color = mint, Transparency = 0.65 }, workspace)
 	local waypointBillboard = make("BillboardGui", { Size = UDim2.fromOffset(210, 50), StudsOffset = Vector3.new(0, 5, 0), AlwaysOnTop = true, MaxDistance = 400 }, waypoint)
@@ -2785,8 +3477,8 @@ function Hud.start(command, catalog, rules, dodgeRules)
 	welcome.ZIndex = 10
 	round(welcome, 18)
 	label(welcome, "A woodland trail. A wild bond.", UDim2.fromOffset(26, 23), UDim2.fromOffset(408, 54), 26, mint)
-	label(welcome, "Take a hunt at the village board. Click / R2 to strike. Double-tap Space or press B / DODGE to evade. Slot 1 / L2 temporarily commands your companion.\n\nSlots 2–8 await learned class skills. Collect each crystal, then return to camp for 60 shells.", UDim2.fromOffset(26, 87), UDim2.fromOffset(408, 127), 15)
-	label(welcome, "Early prototype · progress resets when you leave.\nCompanions share combat strength. No purchases enabled.", UDim2.fromOffset(26, 219), UDim2.fromOffset(408, 37), 11, amber)
+	label(welcome, "Take a hunt at the village board. Click / R2 strikes; Shift / B dodges; Space jumps.\n\nPets fight and use skills on their own. 1 / L2 requests a pet skill. Collect three crystals, then return for 60 shells. Slots 2–8 await class skills.", UDim2.fromOffset(26, 87), UDim2.fromOffset(408, 127), 15)
+	label(welcome, "Early prototype · progress resets when you leave.\nCompanions revive after 10s out of combat. No purchases enabled.", UDim2.fromOffset(26, 219), UDim2.fromOffset(408, 37), 11, amber)
 	button(welcome, "Explore Greywater Reach", UDim2.fromOffset(26, 266), UDim2.fromOffset(408, 34), function()
 		welcome:Destroy()
 	end)
@@ -2817,6 +3509,10 @@ function Hud.start(command, catalog, rules, dodgeRules)
 		refreshTiming()
 		shells.Text = tostring(state.shells) .. " shells"
 		hunts.Text = tostring(state.huntsCompleted) .. " hunts completed"
+		local progress = state.progression
+		if progress then
+			progression.Text = string.format("LV %d · %d coins · %d/%d XP", progress.level, progress.coins, progress.xp, progress.nextLevelXp or 0)
+		end
 		local collected = 0
 		local nextTarget
 		for _, target in targetInfo do
@@ -2856,7 +3552,7 @@ function Hud.start(command, catalog, rules, dodgeRules)
 		toastVersion += 1
 		resizeConnection:Disconnect()
 		inputConnection:Disconnect()
-		ContextActionService:UnbindAction(spaceAction)
+		ContextActionService:UnbindAction(dodgeAction)
 		characterConnection:Disconnect()
 		if healthConnection then healthConnection:Disconnect() end
 		waypoint:Destroy()
@@ -2869,12 +3565,15 @@ return Hud
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="20">
+        <Item class="ModuleScript" referent="23">
           <Properties>
             <string name="Name">PlayerCombatView</string>
             <string name="Source"><![CDATA[--!nonstrict
--- Original local C0 poses bypass Animator's Transform writes. Server effects
--- authorize the punch, impact and dodge; this module never moves the root part.
+-- Native procedural animation supports legacy Motor6D and upgraded R15
+-- AnimationConstraint joints. Restore our layer before Animator evaluates, then
+-- apply it at PreSimulation after Animator; no attachment/C0 mutation or asset
+-- upload is needed. Server effects authorize strikes and root movement.
+-- https://create.roblox.com/docs/reference/engine/classes/AnimationConstraint
 local RunService = game:GetService("RunService")
 local View = {}
 local punchDuration = 0.42
@@ -2890,7 +3589,7 @@ end
 function View.start(player, dodgeRules)
 	local dodgeDuration = (dodgeRules and dodgeRules.duration) or 0.3
 	local stopped, character = false, player.Character
-	local arms, torso, rootJoint, states = {}, nil, nil, {}
+	local arms, legs, torso, rootJoint, states = {}, {}, nil, nil, {}
 	local punch, dash, impact, nextLeft, scanAt = nil, nil, nil, false, 0
 	local effects = Instance.new("Folder")
 	effects.Name = "LocalPlayerCombatEffects"
@@ -2905,7 +3604,8 @@ function View.start(player, dodgeRules)
 		part.Transparency, part.Parent = 1, effects
 		return part
 	end
-	local trail, sparks = {}, {}
+	local trail, sparks, wake = {}, {}, {}
+	for index = 1, 2 do wake[index] = piece("DodgeWake" .. index, Vector3.new(0.06, 0.06, 3)) end
 	for index = 1, 4 do
 		trail[index] = piece("FistTrail" .. index, Vector3.new(0.08, 0.08, 0.3))
 		sparks[index] = piece("HitSpark" .. index, Vector3.new(0.1, 0.1, 0.45))
@@ -2920,36 +3620,61 @@ function View.start(player, dodgeRules)
 	damageText.TextColor3, damageText.TextStrokeTransparency = Color3.fromRGB(243, 229, 178), 0.5
 	damageText.Text, damageText.Parent = "", popup
 	local function hideTrail() for _, part in trail do part.Transparency = 1 end end
+	local function hideWake() for _, part in wake do part.Transparency = 1 end end
 	local function hideImpact()
 		for _, part in sparks do part.Transparency = 1 end
 		popup.Enabled = false
 	end
 	local function restorePose()
 		for joint, state in states do
-			if joint.Parent and sameFrame(joint.C0, state.applied) then joint.C0 = state.base end
+			if joint.Parent and sameFrame(joint.Transform, state.applied) then joint.Transform = state.base end
 		end
 		table.clear(states)
 	end
+	local function jointFrames(joint)
+		if joint:IsA("AnimationConstraint") then
+			local a, b = joint.Attachment0, joint.Attachment1
+			if a and b and a.Parent and b.Parent and a.Parent:IsA("BasePart") and b.Parent:IsA("BasePart") then
+				return a.Parent, b.Parent, a.CFrame, b.CFrame
+			end
+		elseif joint:IsA("Motor6D") and joint.Part0 and joint.Part1 then
+			return joint.Part0, joint.Part1, joint.C0, joint.C1
+		end
+		return nil
+	end
 	local function discoverJoints()
-		arms, torso, rootJoint = { right = {}, left = {} }, nil, nil
+		arms, legs, torso, rootJoint = { right = {}, left = {} }, { right = {}, left = {} }, nil, nil
 		if not character then return end
+		local count, upgraded = 0, 0
 		for _, item in character:GetDescendants() do
-			if item:IsA("Motor6D") then
-				if item.Name == "Root" or item.Name == "RootJoint" then rootJoint = item end
-				if item.Name == "Waist" then torso = item end
+			if item:IsA("Motor6D") or item:IsA("AnimationConstraint") then
+				local _, child = jointFrames(item)
+				if not child then continue end
+				count += 1
+				if item:IsA("AnimationConstraint") then upgraded += 1 end
+				-- Match connected limb names as well as joint names: upgraded
+				-- constraints and custom rig exports can rename the joint itself.
+				if child.Name == "LowerTorso" or child.Name == "Torso" or item.Name == "Root" or item.Name == "RootJoint" then rootJoint = item end
+				if child.Name == "UpperTorso" or item.Name == "Waist" then torso = item end
 				for _, side in { "right", "left" } do
 					local prefix = if side == "right" then "Right" else "Left"
-					if item.Name == prefix .. "Shoulder" or item.Name == prefix .. " Shoulder" then arms[side].shoulder = item end
-					if item.Name == prefix .. "Elbow" then arms[side].elbow = item end
-					if item.Name == prefix .. "Wrist" then arms[side].wrist = item end
+					if child.Name == prefix .. "UpperArm" or child.Name == prefix .. " Arm" or item.Name == prefix .. "Shoulder" or item.Name == prefix .. " Shoulder" then arms[side].shoulder = item end
+					if child.Name == prefix .. "LowerArm" or item.Name == prefix .. "Elbow" then arms[side].elbow = item end
+					if child.Name == prefix .. "Hand" or item.Name == prefix .. "Wrist" then arms[side].wrist = item end
+					if child.Name == prefix .. "UpperLeg" or child.Name == prefix .. " Leg" or item.Name == prefix .. "Hip" or item.Name == prefix .. " Hip" then legs[side].hip = item end
+					if child.Name == prefix .. "LowerLeg" or item.Name == prefix .. "Knee" then legs[side].knee = item end
+					if child.Name == prefix .. "Foot" or item.Name == prefix .. "Ankle" then legs[side].ankle = item end
 				end
 			end
 		end
 		torso = torso or rootJoint
+		character:SetAttribute("WildbondCombatJointCount", count)
+		character:SetAttribute("WildbondCombatRig", if upgraded > 0 then "AnimationConstraint" elseif count > 0 then "Motor6D" else "Waiting for rig")
+		character:SetAttribute("WildbondCombatReady", arms.right.shoulder ~= nil and arms.left.shoulder ~= nil and rootJoint ~= nil and legs.right.hip ~= nil and legs.left.hip ~= nil)
 		scanAt = os.clock() + 0.5
 	end
 	local function setCharacter(nextCharacter)
-		restorePose(); hideTrail(); hideImpact()
+		restorePose(); hideTrail(); hideImpact(); hideWake()
 		punch, dash, impact, character, nextLeft = nil, nil, nil, nextCharacter, false
 		discoverJoints()
 	end
@@ -2964,22 +3689,29 @@ function View.start(player, dodgeRules)
 	end
 	local function compose(joint, rotation)
 		if not joint or not joint.Parent then return end
-		local base, previous = joint.C0, states[joint]
+		local _, _, c0 = jointFrames(joint)
+		if not c0 then return end
+		local base = joint.Transform
+		local previous = states[joint]
 		if previous and sameFrame(base, previous.applied) then base = previous.base end
-		-- Rotate in Part0 coordinates around the existing shoulder pivot, before
-		-- C0's orientation. This makes +X raise the arm FORWARD on R6 and R15.
-		joint.C0 = CFrame.new(base.Position) * rotation * base.Rotation
-		states[joint] = { base = base, applied = joint.C0 }
+		-- Convert Part0-space rotations into the attachment's local axes.
+		-- R6 shoulder/hip attachments have different axes from R15.
+		joint.Transform = c0.Rotation:Inverse() * rotation * c0.Rotation * base
+		states[joint] = { base = base, applied = joint.Transform }
 	end
 	local function fistPosition(arm)
 		local joint = arm.shoulder
-		if not joint or not joint.Part0 or not joint.Part1 then return nil end
-		local frame = joint.Part0.CFrame * joint.C0 * joint.Transform * joint.C1:Inverse()
-		local part = joint.Part1
+		if not joint then return nil end
+		local parent, part, c0, c1 = jointFrames(joint)
+		if not parent then return nil end
+		local frame = parent.CFrame * c0 * joint.Transform * c1:Inverse()
 		for _, nextJoint in { arm.elbow, arm.wrist } do
-			if nextJoint and nextJoint.Part0 == part and nextJoint.Part1 then
-				frame = frame * nextJoint.C0 * nextJoint.Transform * nextJoint.C1:Inverse()
-				part = nextJoint.Part1
+			if nextJoint then
+				local nextParent, nextPart, nextC0, nextC1 = jointFrames(nextJoint)
+				if nextParent == part then
+					frame = frame * nextC0 * nextJoint.Transform * nextC1:Inverse()
+					part = nextPart
+				end
 			end
 		end
 		return frame:PointToWorldSpace(Vector3.new(0, -part.Size.Y * 0.45, 0))
@@ -2988,17 +3720,28 @@ function View.start(player, dodgeRules)
 		if stopped then return end
 		local root, now = rootPart(), os.clock()
 		if not root then
-			restorePose(); hideTrail(); hideImpact()
+			restorePose(); hideTrail(); hideImpact(); hideWake()
 			punch, dash, impact = nil, nil, nil
 			return
 		end
-		local activeArm = punch and arms[punch.side]
-		local missing = activeArm and (not activeArm.shoulder or not activeArm.shoulder.Parent
-			or (activeArm.shoulder.Part1 and string.find(activeArm.shoulder.Part1.Name, "UpperArm", 1, true)
-				and (not activeArm.elbow or not activeArm.wrist)))
+		local function incomplete(limb, primary, second, third, r15Part)
+			local joint = limb and limb[primary]
+			if not joint or not joint.Parent then return true end
+			local _, child = jointFrames(joint)
+			return child and string.find(child.Name, r15Part, 1, true) ~= nil
+				and (not limb[second] or not limb[second].Parent or not limb[third] or not limb[third].Parent)
+		end
+		local missing = punch and incomplete(arms[punch.side], "shoulder", "elbow", "wrist", "UpperArm")
+		if dash then
+			missing = missing or not rootJoint or not rootJoint.Parent
+			for _, side in { "right", "left" } do
+				missing = missing or incomplete(arms[side], "shoulder", "elbow", "wrist", "UpperArm")
+					or incomplete(legs[side], "hip", "knee", "ankle", "UpperLeg")
+			end
+		end
 		if now >= scanAt or missing then discoverJoints() end
 		if punch and now - punch.started >= punchDuration then punch = nil; hideTrail() end
-		if dash and now - dash.started >= dodgeDuration then dash = nil end
+		if dash and now - dash.started >= dodgeDuration then dash = nil; hideWake() end
 		restorePose()
 		local torsoPose = CFrame.identity
 		if punch then
@@ -3043,8 +3786,27 @@ function View.start(player, dodgeRules)
 		if dash then
 			local strength = math.sin(math.clamp((now - dash.started) / dodgeDuration, 0, 1) * math.pi)
 			local direction = root.CFrame:VectorToObjectSpace(dash.direction)
-			local lean = CFrame.Angles(-direction.Z * math.rad(28) * strength, 0, -direction.X * math.rad(30) * strength)
-			if rootJoint == torso then torsoPose *= lean else compose(rootJoint, lean) end
+			local across = Vector3.new(-dash.direction.Z, 0, dash.direction.X)
+			for index, part in wake do
+				local position = root.Position - dash.direction * 1.6 + across * (if index == 1 then -1.15 else 1.15)
+				part.CFrame = CFrame.lookAt(position, position + dash.direction)
+				part.Size = Vector3.new(0.06, 0.06, 1 + strength * 4)
+				part.Transparency = 0.9 - strength * 0.35
+			end
+			local lean = CFrame.new(0, -0.35 * strength, 0) * CFrame.Angles(direction.Z * math.rad(32) * strength, 0, -direction.X * math.rad(30) * strength)
+			if rootJoint == torso then torsoPose = lean * torsoPose else compose(rootJoint, lean) end
+			for _, side in { "right", "left" } do
+				local sign = if side == "right" then 1 else -1
+				local stride = math.sin((now - dash.started) / dodgeDuration * math.pi * 2) * sign * 24
+				local leg, arm = legs[side], arms[side]
+				compose(leg.hip, CFrame.Angles(math.rad(30 + stride) * strength, 0, 0))
+				compose(leg.knee, CFrame.Angles(math.rad(-65) * strength, 0, 0))
+				compose(leg.ankle, CFrame.Angles(math.rad(25) * strength, 0, 0))
+				if not punch or punch.side ~= side then
+					compose(arm.shoulder, CFrame.Angles(math.rad(-30) * strength, 0, math.rad(sign * 10) * strength))
+					compose(arm.elbow, CFrame.Angles(math.rad(85) * strength, 0, 0))
+				end
+			end
 		end
 		if punch or dash then compose(torso, torsoPose) end
 		if impact then
@@ -3059,7 +3821,10 @@ function View.start(player, dodgeRules)
 			if age >= 0.6 then impact = nil; hideImpact() end
 		end
 	end
-	local poseConnection = (RunService.PreSimulation or RunService.RenderStepped):Connect(update)
+	-- PreAnimation restores the previous cosmetic layer before Animator runs.
+	-- PreSimulation then applies the fresh pose to BOTH supported joint types.
+	local beforeAnimation = RunService.PreAnimation:Connect(restorePose)
+	local poseConnection = RunService.PreSimulation:Connect(update)
 	local function attackFx(target, hit, damage)
 		if stopped or not rootPart() then return end
 		hideTrail()
@@ -3076,7 +3841,7 @@ function View.start(player, dodgeRules)
 	local function cleanup()
 		if stopped then return end
 		stopped = true
-		poseConnection:Disconnect(); added:Disconnect(); removed:Disconnect()
+		poseConnection:Disconnect(); beforeAnimation:Disconnect(); added:Disconnect(); removed:Disconnect()
 		restorePose(); effects:Destroy()
 		character = nil
 	end
@@ -3089,7 +3854,7 @@ return View
       </Item>
     </Item>
   </Item>
-  <Item class="Workspace" referent="21">
+  <Item class="Workspace" referent="24">
     <Properties>
       <string name="Name">Workspace</string>
       <float name="Gravity">196.2</float>

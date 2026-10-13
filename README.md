@@ -1,31 +1,30 @@
 # Wildbond
 
-Một trò chơi Roblox RPG PvE trên vùng rừng **Greywater Reach**, nơi người chơi đánh boss và sưu tầm bạn đồng hành. Bản hiện tại đã có **quái tuần tra/đuổi/đánh thường, animation thủ tục và né**, vẫn là alpha cần thử trong engine trước khi phát hành.
+Roblox RPG PvE trên vùng rừng **Greywater Reach**: quái đi lại, đánh thường, boss và thú tham chiến. Bản **0.4.0** mở rộng map, bổ sung combat của pet và nền EXP/tiền. Đây vẫn là alpha cần thử trong Roblox Studio.
 
-Bạn xuất hiện ở làng Greywater, nhận chuyến săn tại bảng nhiệm vụ, đánh hai hộ vệ và mini-boss Hollow Crown. Quái đi quanh điểm sinh, đuổi vào phạm vi đánh và lấy đà vung tay; boss kết hợp đánh thường với skill. Di chuyển/né, gọi thú hỗ trợ, lấy ba tinh thể rồi quay về rương làng nhận 60 shells. Chuyến săn có thể nhận lại. Sói đi cùng từ đầu; cáo và gấu con mở bằng shells kiếm trong game.
+Bạn xuất hiện ở làng Greywater, nhận chuyến săn, hạ hai hộ vệ và Hollow Crown, lấy ba tinh thể rồi về rương nhận 60 shells. Có thể nhận lại hunt. Ngoài đường săn đầu còn có rừng, đồng cỏ, đầm lau và phế tích để khám phá, với 25 quái thuộc bốn loại. Quái thường đánh được ngay khi chưa nhận hunt.
 
-Ba thú đều có đòn BOND, cùng sức mạnh ở bản này; vai trò riêng/tự đánh/tiến hóa chưa triển khai. Có tám ô skill, ô 1 tạm dùng cho lệnh thú, ô 2–8 chưa học. Chưa có class, level/EXP, loot trang bị, túi đồ hay NPC bán đồ. Tiến độ giữ trong phiên và mất khi rời server. Không có cửa hàng Robux hoặc lưu DataStore.
+Pet có máu/chỉ số riêng, tự tiếp cận, đánh thường và dùng skill khi chủ giao tranh. Quái có thể đánh pet. Pet bị hạ chỉ hồi sinh sau khi chủ rời combat liên tục 10 giây; giao tranh lại hủy đếm ngược. Sói có từ đầu, cáo/gấu con mở bằng shells; cả ba cùng sức mạnh ở mốc này.
+
+Quái thưởng **coins và EXP** cho người góp sát thương hợp lệ, gồm damage từ pet; nền cấp độ 1–40 và HUD EXP đã có. Coins khác shells dùng mở pet. Cấp độ chưa tăng chỉ số hoặc mở class; chưa có đồ rơi, túi đồ, NPC bán đồ, tiến hóa/nội tại thú hay skill tree. **Mọi tiến độ chỉ giữ trong phiên**, mất khi rời server; chưa có DataStore hay bán hàng Robux.
 
 ## Mở bản chơi
 
-Trên GitHub, tải [Wildbond.rbxlx](Wildbond.rbxlx) ở thư mục gốc của kho bằng nút **Download raw file**. Đây là bản đóng gói cùng mã nguồn trong commit này; khi sửa mã, dùng lệnh build bên dưới để tạo bản mới.
+Trên GitHub tải [Wildbond.rbxlx](Wildbond.rbxlx) bằng **Download raw file**. Mở trong Roblox Studio trên Windows/macOS bằng **File → Open from File**, nhấn **Play**. Map được sinh khi server bắt đầu chạy nên chưa hiện trước Play. Output/HUD có dấu bản **0.4.0** để phân biệt bản cũ.
 
-Tệp đã build: `build/Wildbond.rbxlx`. Tải tệp về máy Windows hoặc macOS có **Roblox Studio**, dùng **File → Open from File**, rồi nhấn **Play**. Map được sinh khi server bắt đầu chạy nên chưa xuất hiện trong chế độ chỉnh sửa trước khi Play. Không cần API key hay asset riêng cho mốc này.
+- **Click**, **R2**, **STRIKE**: đánh thường, 10 damage/0,6 giây trong 8 studs. Click hụt vẫn diễn đòn.
+- **Shift trái/phải**, **B**, **DODGE**: lướt tối đa 16 studs/0,3 giây, hồi 4 giây. Space chỉ nhảy. Server kiểm tra tường/mặt đất trên từng đoạn và giữ vận tốc nhảy.
+- Pet **tự đánh và tự dùng skill**; **1**, **L2**, **BOND** yêu cầu dùng skill sớm nếu sẵn sàng, dùng chung cooldown 6 giây. Ô 2–8 chưa học, để dành skill class.
+- **E**, **X** hoặc prompt cảm ứng: nhận hunt, lấy tinh thể, nhận thưởng.
+- **C**, **Y**, **Companions**: bộ sưu tập/đổi thú. HUD hiển thị máu, chỉ số và trạng thái hồi sinh pet.
+- **MOVE!**: rời vòng đã đánh dấu; **RETREAT!**: rút khỏi vòng quanh boss. Di chuyển khỏi cung đánh thường cũng tránh được đòn, không cần chờ lướt cho mọi đòn.
+- Không hồi máu nhân vật thụ động. Nhận hunt thành công, nhận thưởng hoặc hồi sinh sẽ hồi đầy máu nhân vật; không thay quy tắc hồi sinh pet. Đồng hồ hunt ghi tổng thời gian và số lần ngã, không thưởng thêm vì chạy nhanh.
 
-- Di chuyển bằng điều khiển Roblox thông thường.
-- **Click**, **R2** hoặc nút **STRIKE**: đánh thường. Click hụt/tập đánh vẫn có animation, không gây sát thương ngoài phạm vi.
-- **1**, **L2** hoặc nút **BOND**: gọi thú đánh quái gần nhất trong phạm vi 18 studs. Hồi chiêu 3,2 giây; server kiểm tra lại trước khi sát thương đến sau 0,3 giây. Ô 2–8 để dành skill class đã học ở các mốc sau.
-- **Space hai lần trong 0,28 giây**, **B** trên tay cầm hoặc **DODGE**: lướt theo hướng di chuyển/hướng nhìn, tối đa 16 studs trong 0,3 giây; cooldown 4 giây. Space lần đầu vẫn nhảy. Server kiểm tra từng đoạn đường, dừng trước vật cản/hố và giữ vận tốc nhảy; chưa có thanh thể lực.
-- **E**, nút **X** trên tay cầm hoặc prompt cảm ứng: nhận nhiệm vụ, lấy tinh thể, nhận thưởng.
-- **C**, **Y** trên tay cầm hoặc nút **Companions**: mở bộ sưu tập và đổi thú.
-- **MOVE!**: rời vòng tại vị trí được đánh dấu. **RETREAT!**: rút ra ngoài vòng quanh boss. Không có hồi máu thụ động; nhận hunt thành công, hoàn thành hoặc hồi sinh sẽ hồi đầy máu. Chết giữ bước nhiệm vụ trong phiên.
-- HUD ghi thời gian cả chuyến, số lần ngã, lượt gần nhất và thời gian tốt nhất trong phiên. Không có thưởng thêm vì chạy nhanh.
+Nền đất liền mới **550×624**, đúng **6 lần diện tích** nền 220×260 cũ. Đường săn ba mục tiêu vẫn gần làng, không bắt người mới chạy hết map. Bến xe ngựa đang trang trí, chưa chuyển vùng. Geometry gốc theo hướng rừng low poly, chưa có bộ art/audio cuối cùng.
 
-Vùng hiện tại có nền liên tục 220×260, đường rừng, thác, phế tích và bến xe ngựa trang trí chưa chở người. Có chín quái thuộc bốn loại: Sprout, Reed, Ancient và Brush Boar; ba mục tiêu bounty và sáu quái thường để thử combat. Quái thường đánh được không cần nhận bounty, chưa rơi tiền/EXP/trang bị. Animation quái và nhân vật tạo bằng chuyển động thủ tục, chưa phải bộ animation hoàn thiện. Giao diện dùng tiếng Anh; model/hình khối gốc lấy cảm hứng từ ảnh tham khảo. Chưa có âm nhạc hoặc asset của bên khác.
+Đợt sửa animation hỗ trợ cả `Motor6D` và khớp R15 mới `AnimationConstraint`, đặt pose sau Animator ở PreSimulation và gỡ lớp trước lượt Animator tiếp theo. Có chuyển động vai/khuỷu/cổ tay khi đấm, thân/chân khi lướt và hiệu ứng trúng. Đây là sửa từ mã và tài liệu Roblox; **chưa xác minh hình ảnh native trong Studio**. Nếu còn lỗi, kiểm tra thuộc tính nhân vật `WildbondCombatRig`/`WildbondCombatJointCount` và Output theo checklist.
 
-Đợt sửa theo phản hồi Studio chuyển đòn đấm sang `Motor6D.C0`: hai tay đánh luân phiên, R15 có vai/khuỷu/cổ tay, vệt theo nắm đấm; trúng mới có tia va chạm và số damage. Test tính chuyển động nắm tay bằng forward kinematics thay vì chỉ kiểm tra đã đổi thuộc tính joint. Hình ảnh và Animator native vẫn cần thử lại trong Studio trên cả R6/R15.
-
-## Phát triển trong môi trường đám mây
+## Phát triển trong cloud
 
 ```bash
 cd /workspace/zzzz
@@ -33,34 +32,25 @@ python3 scripts/bootstrap.py
 bash scripts/check.sh
 ```
 
-Installer dành cho Linux x86_64: Rojo 7.7.1, Lune 0.11.0 và Luau 0.742. Binary tải từ release chính thức; checksum SHA-256 đã đối chiếu với metadata release GitHub. Tools và build được giữ trong thư mục bỏ qua Git, source không cần package manager. Dùng checkout đang có; mỗi task cloud đã được cách ly, không cần tạo worktree mới.
+Installer Linux x86_64 giữ Rojo 7.7.1, Lune 0.11.0, Luau 0.742, kiểm SHA-256 từ release chính thức. Tools/build bỏ qua Git; dùng checkout sẵn có vì mỗi task cloud đã cách ly.
 
-`check.sh` biên dịch cú pháp Luau, phân tích kiểu các module luật, chạy kiểm tra headless, mô hình cân bằng và đóng gói place bằng Rojo. Những bước này không thay thế engine Roblox, kiểm tra cảm giác điều khiển hoặc đo FPS trên điện thoại. Cloud hiện không có Roblox Studio.
+`check.sh` biên dịch Luau, phân tích kiểu các luật, chạy test module thực với reflection/mocks, báo cáo cân bằng và build `build/Wildbond.rbxlx`. Sau sửa mã, copy build mới sang `Wildbond.rbxlx` gốc trước commit để người dùng GitHub tải được bản tương ứng. Cloud Linux không có Roblox Studio: những bước này không xác minh rendering, physics, network hoặc FPS mobile.
 
-Nhịp mục tiêu của vòng alpha cũ là 90–180 giây lượt đầu, 60–120 giây khi thuộc đường; cần đo lại sau khi đổi AI. Báo cáo giờ chỉ tính cận dưới sát thương và khoảng thoát, không dự báo thời gian hoàn thành hoặc khả năng sống. Chi tiết ở [docs/balance.md](docs/balance.md); chạy bằng `.tools/lune run scripts/balance_report.luau`.
+Trên máy riêng có thể chạy `rojo serve default.project.json` cùng plugin Rojo trong Studio; mở file place thì không cần plugin. Xem [checklist Studio](docs/studio-checklist.md), [cân bằng](docs/balance.md), [tiến độ](docs/progress.md), [yêu cầu đầy đủ](docs/design.md) và [roadmap](docs/roadmap.md). Bán hàng theo [monetization.md](docs/monetization.md), chưa triển khai.
 
-Trên máy riêng có thể cài Rojo cùng phiên bản, chạy `rojo serve default.project.json` và kết nối plugin Rojo trong Studio để đồng bộ mã. Với bản `.rbxlx`, không cần plugin. Chỉ publish experience khi đã kiểm tra và chủ tài khoản Roblox quyết định phát hành.
-
-## Kiểm tra trong Studio
-
-Theo [docs/studio-checklist.md](docs/studio-checklist.md), ghi lỗi cùng dòng Output vào lần làm tiếp. [docs/design.md](docs/design.md) giữ đầy đủ yêu cầu RPG; [docs/progress.md](docs/progress.md) ghi trạng thái; [docs/roadmap.md](docs/roadmap.md) chia các đợt nhỏ. Quyết định cửa hàng và nguồn Roblox ở [docs/monetization.md](docs/monetization.md).
-
-## Cấu trúc mã
+## Cấu trúc
 
 | Tệp | Vai trò |
 | --- | --- |
-| `src/shared/Expedition.luau` | Nhiệm vụ, thưởng, mở và trang bị thú; quy tắc thuần Luau |
-| `src/shared/CombatRules.luau` | Thông số quái và điều kiện chiến đấu |
-| `src/shared/HuntMetrics.luau` | Đo thời gian và số lần ngã bằng clock server, không thay đổi phần thưởng |
-| `src/shared/DodgeRules.luau` | Khoảng né, hồi chiêu và kiểm tra hướng |
-| `src/server/init.server.luau` | Trạng thái phiên, prompt, kiểm tra remote và ghép hệ thống |
-| `src/server/CombatService.luau` | Tuần tra/đuổi/trở về, đánh thường/skill, sát thương/thú và đóng góp phía server |
-| `src/server/DodgeService.luau` | Di chuyển né, raycast, miễn sát thương ngắn và quyền sở hữu mạng |
-| `src/server/WorldBuilder.luau` | Vùng rừng, làng, thác, phế tích, trạm xe và mốc tương tác |
-| `src/client/Hud.luau` | Nhiệm vụ, máu, điều khiển và bộ sưu tập |
-| `src/client/CompanionView.luau` | Hình dáng và chuyển động bạn đồng hành ở client |
-| `src/client/EnemyView.luau` | Animation quái từ trạng thái/thời gian server; giữ hitbox gốc |
-| `src/client/PlayerCombatView.luau` | Vung tay/né R6/R15 và VFX, không tự di chuyển nhân vật |
-| `src/character/Health.server.luau` | Ghi đè script Health mặc định để tắt hồi máu thụ động |
+| `shared/Expedition` | Hunt, shells, bộ sưu tập và equip revision |
+| `shared/CombatRules`, `shared/DodgeRules` | Quái, phạm vi, đóng góp và lướt |
+| `shared/PetRules`, `server/PetService` | Chỉ số pet, tự chiến đấu, máu, chết/hồi sinh |
+| `shared/Progression` | EXP/coins/cấp độ trong phiên, chỉ server trao thưởng |
+| `shared/HuntMetrics` | Thời gian hunt và số lần ngã |
+| `server/init.server`, `server/CombatService` | Remote, AI, damage và reward authority |
+| `server/DodgeService`, `server/WorldBuilder` | Lướt an toàn và tạo vùng đất |
+| `client/Hud`, `client/CompanionView` | UI và pet từ actor server |
+| `client/EnemyView`, `client/PlayerCombatView` | Animation/VFX, giữ authority server |
+| `character/Health.server` | Tắt hồi máu nhân vật mặc định |
 
-Client không gửi giá, phần thưởng, tọa độ đòn hoặc khai đã giết quái. Server quyết định kết quả. Vật phẩm trả tiền không được triển khai cho đến khi có lưu dữ liệu và xử lý giao dịch đáng tin cậy.
+Client không gửi giá, số thưởng, damage hoặc tuyên bố đã hạ quái. Server quyết định kết quả. Các phần class/trang bị/craft/chuyển vùng được giữ trong design để làm tiếp qua những đợt nhỏ.

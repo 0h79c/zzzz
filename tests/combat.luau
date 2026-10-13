@@ -65,13 +65,15 @@ check(not Rules.inSlam({ x = 2, y = -4.01, z = -4 }, slamCenter, 5), "Below disk
 check(not Rules.inSlam({ x = 0 / 0, y = 7, z = -4 }, slamCenter, 5), "Invalid slam position fails closed")
 check(not Rules.inSlam(slamCenter, slamCenter, -1), "Negative slam radius fails closed")
 
-check(#Rules.foes == 9 and Rules.respawnDelay == 6 and Rules.firstSlamDelay == 2.8, "Nine respawning creatures and engagement warning delay")
+check(#Rules.foes == 25 and Rules.respawnDelay == 6 and Rules.firstSlamDelay == 2.8, "Expanded mainland has 25 respawning creatures and preserves engagement warning delay")
 local health = { moss = 140, river = 200, ruins = 600, brush01 = 80, brush02 = 75, brush03 = 75, brush04 = 80, brush05 = 100, brush06 = 100 }
-local seen, kinds, bountyCount = {}, {}, 0
+local seen, kinds, bountyCount, regions = {}, {}, 0, {}
 for _, foe in Rules.foes do
-	check(not seen[foe.id] and health[foe.id] == foe.maxHealth, "Unique creature id and expected health")
+	check(not seen[foe.id] and (health[foe.id] == nil or health[foe.id] == foe.maxHealth), "Unique creature id and preserved starter creature health")
 	seen[foe.id] = true
 	kinds[foe.kind] = true
+	local region = string.match(foe.id, "^([a-z]+)%d+$")
+	if region then regions[region] = (regions[region] or 0) + 1 end
 	check(foe.windup >= 0.8 and foe.slamDamage < 100, "Slam gives a warning and is survivable at full health")
 	check(Rules.eligible(state, true, foe.id), "Active hunter can fight every known creature")
 	if foe.bounty then
@@ -90,9 +92,13 @@ for _, foe in Rules.foes do
 		state.active = true
 		check(not Rules.canReward(state, true, true, true, foe.id, origin, origin), "Ambient kill cannot grant a bounty reward")
 		check(not foe.boss and foe.slamDamage == 0 and foe.maxHealth <= 100, "Ambient encounters are lighter basic-attack creatures")
+		check(foe.maxHealth == ({ boar = 75, sprout = 80, reed = 100 })[foe.kind] and foe.meleeDamage <= 7,
+			"Outer populations preserve the readable introductory strength of their species")
 	end
 end
 check(bountyCount == 3 and kinds.sprout and kinds.reed and kinds.ancient and kinds.boar, "Three bounty encounters and four creature kinds")
+check(regions.brush == 6 and regions.forest == 5 and regions.marsh == 4 and regions.outskirts == 3 and regions.meadow == 4,
+	"Outer forest, marsh, ruins approaches and meadow all have real hunting populations")
 check(Rules.foes[3].boss and Rules.foes[3].slamRadius == 7 and Rules.foes[3].slamDamage == 22, "Boss has distinct area and damage")
 check(Rules.petDamage == 18 and Rules.petCooldown == 3.2 and Rules.petRange == 18 and Rules.petWindup == 0.3,
 	"Companion strike has its own range, delay, damage, and pacing")

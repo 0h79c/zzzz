@@ -3,12 +3,15 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local shared = ReplicatedStorage:WaitForChild("Wildbond")
+shared:SetAttribute("BuildVersion", "0.4.0")
 local Expedition = require(shared:WaitForChild("Expedition"))
 local CombatRules = require(shared:WaitForChild("CombatRules"))
 local HuntMetrics = require(shared:WaitForChild("HuntMetrics"))
+local Progression = require(shared:WaitForChild("Progression"))
 local WorldBuilder = require(script:WaitForChild("WorldBuilder"))
 local CombatService = require(script:WaitForChild("CombatService"))
 local DodgeService = require(script:WaitForChild("DodgeService"))
+local PetService = require(script:WaitForChild("PetService"))
 local world = WorldBuilder.build()
 
 local remotes = Instance.new("Folder")
@@ -27,6 +30,7 @@ effect.Parent = remotes
 -- This alpha deliberately keeps session data in memory. No Robux purchases exist.
 local sessions = {}
 local measurements = {}
+local profiles = {}
 local lastCommand = {}
 local lastPrompt = {}
 local actionIntervals = { sync = 1, attack = 0.1, bond = 0.1, dodge = 0.1, unlock = 0.25, equip = 0.25 }
@@ -39,6 +43,7 @@ local function send(player, message, success)
 	player:SetAttribute("CompanionId", state.equipped)
 	local snapshot = Expedition.snapshot(state)
 	snapshot.timing = HuntMetrics.snapshot(measurements[player], os.clock())
+	snapshot.progression = Progression.snapshot(profiles[player])
 	update:FireClient(player, snapshot, message, success)
 end
 
@@ -52,6 +57,20 @@ end, function(player, id)
 	end
 end, function(player, targetPosition)
 	effect:FireClient(player, "bond", targetPosition)
+end, function(player, definition)
+	local profile = profiles[player]
+	if not profile or player.Parent ~= Players then return end
+	local gained = Progression.award(profile, definition)
+	if gained == nil then return end
+	local reward = Progression.rewards[definition.kind]
+	local message = string.format("+%d coins · +%d XP", reward.coins, reward.xp)
+	if gained > 0 then message ..= string.format(" · Level %d!", profile.level) end
+	send(player, message, true)
+end)
+local companions = PetService.start(function(player)
+	return sessions[player]
+end, combat, function(player, targetPosition)
+	effect:FireClient(player, "bond", targetPosition)
 end)
 local dodging = DodgeService.start()
 
@@ -61,6 +80,7 @@ local function addPlayer(player)
 	end
 	sessions[player] = Expedition.new()
 	measurements[player] = HuntMetrics.new()
+	profiles[player] = Progression.new()
 	player:SetAttribute("CompanionId", "mosswolf")
 	local function characterAdded(character)
 		local humanoid = character:WaitForChild("Humanoid", 10)
@@ -85,6 +105,7 @@ Players.PlayerAdded:Connect(addPlayer)
 Players.PlayerRemoving:Connect(function(player)
 	sessions[player] = nil
 	measurements[player] = nil
+	profiles[player] = nil
 	lastCommand[player] = nil
 	lastPrompt[player] = nil
 end)
@@ -182,8 +203,9 @@ command.OnServerEvent:Connect(function(player, action, payload)
 end)
 
 game:BindToClose(function()
+	companions.destroy()
 	combat.destroy()
 	dodging.destroy()
 end)
 
-print("Wildbond alpha ready: roaming foes, animated attacks and server dodges; purchases disabled.")
+print("Wildbond 0.4.0 ready: roaming foes, companion HP and automatic combat; purchases disabled.")

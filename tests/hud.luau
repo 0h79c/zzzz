@@ -40,6 +40,7 @@ end)
 roblox.implementMethod("Instance", "WaitForChild", function(item, name)
 	return item:FindFirstChild(name)
 end)
+roblox.implementMethod("Workspace", "GetServerTimeNow", function() return 1000 + now end)
 local scene = roblox.Instance.new("Workspace")
 local camera = roblox.Instance.new("Camera")
 local viewport = roblox.Vector2.new(568, 320)
@@ -53,7 +54,9 @@ humanoid.MoveDirection = roblox.Vector3.new(3, 0, 4)
 local root = roblox.Instance.new("Part")
 root.Name, root.CFrame, root.Parent = "HumanoidRootPart", roblox.CFrame.new(0, 7, 0), character
 local render, input, added = signal(), signal(), signal()
+local playerAttributes = {}
 local player = {
+	GetAttribute = function(_, key) return playerAttributes[key] end,
 	Character = character, CharacterAdded = added,
 	WaitForChild = function(_, name) assert(name == "PlayerGui"); return playerGui end,
 }
@@ -64,8 +67,8 @@ local services = {
 	Players = { LocalPlayer = player }, RunService = { RenderStepped = render },
 	UserInputService = { TouchEnabled = true, InputBegan = input, GetFocusedTextBox = function() return focus end },
 	ContextActionService = {
-		BindActionAtPriority = function(_, name, callback, touch, priority, key)
-			check(touch == false and priority > roblox.Enum.ContextActionPriority.High.Value and key == roblox.Enum.KeyCode.Space, "Double Space intercepts only Space above Roblox's jump action")
+		BindActionAtPriority = function(_, name, callback, touch, priority, left, right)
+			check(touch == false and priority > roblox.Enum.ContextActionPriority.High.Value and left == roblox.Enum.KeyCode.LeftShift and right == roblox.Enum.KeyCode.RightShift, "Single Shift consumes both Shift keys without binding Space")
 			boundActions[name] = callback
 		end,
 		UnbindAction = function(_, name) boundActions[name] = nil end,
@@ -91,7 +94,7 @@ local function textItem(text)
 	end
 	error("Missing HUD text: " .. text)
 end
-local strikeButton, bondButton = textItem("STRIKE"), textItem("BOND")
+local strikeButton, bondButton = textItem("STRIKE"), textItem("PET SKILL")
 local dodgeButton = textItem("DODGE")
 local hotbar = assert(canvas:FindFirstChild("SkillHotbar"))
 for index = 1, 8 do
@@ -129,14 +132,14 @@ now = 0.81
 input:Fire({ KeyCode = roblox.Enum.KeyCode.One }, false)
 check(#commands == 4, "Rejected or unanswered bond request does not start the combat cooldown")
 hud:bondAccepted()
-check(bondButton.Text == "BOND 3.2", "Accepted server bond starts a one-decimal cooldown display")
+check(bondButton.Text == "PET SKILL 3.2", "Accepted server bond starts a one-decimal cooldown display")
 now = 3.0
 input:Fire({ KeyCode = roblox.Enum.KeyCode.ButtonL2 }, false)
 check(#commands == 4, "L2 respects the accepted server cooldown")
 now = 4.02
 render:Fire(1)
 input:Fire({ KeyCode = roblox.Enum.KeyCode.ButtonL2 }, false)
-check(#commands == 5 and bondButton.Text == "BOND", "Controller bond returns after the shared cooldown")
+check(#commands == 5 and bondButton.Text == "PET SKILL", "Controller bond returns after the shared cooldown")
 input:Fire({ KeyCode = roblox.Enum.KeyCode.One }, true)
 check(#commands == 5, "Processed chat/UI inputs do not trigger combat")
 input:Fire({ KeyCode = roblox.Enum.KeyCode.Q }, false)
@@ -149,44 +152,39 @@ input:Fire({ KeyCode = roblox.Enum.KeyCode.ButtonB }, false)
 check(#commands == 5, "Focused text input blocks attacks and dodge")
 focus = nil
 
-local space = assert(boundActions.WildbondDoubleSpaceDodge)
-check(space("", roblox.Enum.UserInputState.Begin) == roblox.Enum.ContextActionResult.Pass, "First Space retains normal Roblox jump")
+local shift = assert(boundActions.WildbondShiftDodge)
+input:Fire({ KeyCode = roblox.Enum.KeyCode.Space }, false)
 input:Fire({ KeyCode = roblox.Enum.KeyCode.Space }, true)
-now += 0.2
-check(space("", roblox.Enum.UserInputState.Begin) == roblox.Enum.ContextActionResult.Sink, "A processed default-jump event cannot erase CAS history; second Space is consumed")
-check(#commands == 6 and commands[6][1] == "dodge" and (commands[6][2] - roblox.Vector3.new(0.6, 0, 0.8)).Magnitude < 0.001, "Double Space sends a normalized horizontal move direction")
+check(#commands == 5 and boundActions.WildbondDoubleSpaceDodge == nil, "Normal or processed Space never sends dodge; native jumping owns Space")
+check(shift("", roblox.Enum.UserInputState.Begin) == roblox.Enum.ContextActionResult.Sink, "One Shift press is immediately consumed for dodge")
+check(#commands == 6 and commands[6][1] == "dodge" and (commands[6][2] - roblox.Vector3.new(0.6, 0, 0.8)).Magnitude < 0.001, "Single Shift sends a normalized horizontal movement direction")
+check(shift("", roblox.Enum.UserInputState.End) == roblox.Enum.ContextActionResult.Sink and #commands == 6, "Shift release is consumed without issuing another dodge or toggling mouse lock")
 check(dodgeButton.Text == "DODGE", "Unanswered dodge does not start a displayed cooldown")
 hud:dodgeAccepted()
 check(dodgeButton.Text == "DODGE 4.0", "Accepted server dodge displays the shared cooldown")
 now += 1
 input:Fire({ KeyCode = roblox.Enum.KeyCode.ButtonB }, false)
 activated[dodgeButton]:Fire()
-check(#commands == 6, "Touch and gamepad dodge respect the accepted cooldown")
+shift("", roblox.Enum.UserInputState.Begin)
+check(#commands == 6, "Shift, touch and gamepad respect the accepted dodge cooldown")
 now += 3.1
 humanoid.MoveDirection = roblox.Vector3.zero
 input:Fire({ KeyCode = roblox.Enum.KeyCode.ButtonB }, false)
 check(#commands == 7 and commands[7][2] == roblox.Vector3.new(0, 0, -1), "Stationary controller dodge uses the character's forward direction")
-now += 0.3
-space("", roblox.Enum.UserInputState.Begin)
-now += 0.29
-check(space("", roblox.Enum.UserInputState.Begin) == roblox.Enum.ContextActionResult.Pass and #commands == 7, "Two Space taps outside 0.28s remain normal jumps")
 focus = {}
-space("", roblox.Enum.UserInputState.Begin)
+now += 0.3
+check(shift("", roblox.Enum.UserInputState.Begin) == roblox.Enum.ContextActionResult.Pass and #commands == 7, "Typing blocks Shift combat and passes input through")
 focus = nil
-now += 0.1
-check(space("", roblox.Enum.UserInputState.Begin) == roblox.Enum.ContextActionResult.Pass and #commands == 7, "Chat-focused Space cannot seed a later dodge")
-input:Fire({ KeyCode = roblox.Enum.KeyCode.Space }, true)
-now += 0.1
-check(space("", roblox.Enum.UserInputState.Begin) == roblox.Enum.ContextActionResult.Sink and #commands == 8, "Only CAS owns Space history across processed UIS jump events")
-input:Fire({ KeyCode = roblox.Enum.KeyCode.Space }, true)
-now += 0.1
-check(space("", roblox.Enum.UserInputState.Begin) == roblox.Enum.ContextActionResult.Pass and #commands == 8, "A second Sink's processed event cannot corrupt the next normal first tap")
+now += 0.3
+check(shift("", roblox.Enum.UserInputState.Begin) == roblox.Enum.ContextActionResult.Sink and #commands == 8, "Shift works after chat closes without requiring a previous tap")
 
 local state = Expedition.new()
 state.active = true
 state.timing = { elapsed = 25, deaths = 1 }
+state.progression = { coins = 35, xp = 25, level = 2, nextLevelXp = 120, maxLevel = 40 }
 hud:render(state)
 textItem("0:25 elapsed · 1 fall")
+check(textItem("LV 2 · 35 coins · 25/120 XP") ~= nil, "Server progression snapshot appears in the existing purse")
 now += 3.1
 render:Fire(1)
 check(textItem("0:28 elapsed · 1 fall") ~= nil, "Elapsed HUD time advances from the snapshot without comparing server and client clocks")
@@ -199,6 +197,29 @@ state.active = false
 state.timing = { lastDuration = 126, bestDuration = 98, lastDeaths = 1 }
 hud:render(state, "Hunt complete.", true)
 check(textItem("Last 2:06 · best 1:38 · falls 1") ~= nil, "Finished hunt shows duration, personal best and falls")
+
+playerAttributes.PetHealth, playerAttributes.PetMaxHealth = 37, 60
+playerAttributes.PetAttackDamage, playerAttributes.PetSkillDamage, playerAttributes.PetDefense = 4, 12, 1
+playerAttributes.PetState, playerAttributes.InCombat = "Attack", true
+playerAttributes.PetSkillReadyAt = 1000 + now + 5
+render:Fire(0.1)
+check(textItem("Companion 37 / 60 HP") ~= nil and textItem("ATK 4 · skill 12 · DEF 1") ~= nil, "Companion HP and separate stats use authoritative replicated player attributes")
+check(textItem("Auto skill 5.0s · in combat") ~= nil and bondButton.Text == "PET SKILL 5.0", "Automatic skill cooldown uses synchronized server time despite a 1000-second client clock offset")
+now += 1
+input:Fire({ KeyCode = roblox.Enum.KeyCode.One }, false)
+check(#commands == 8, "Manual skill request also respects the automatic skill's authoritative cooldown")
+playerAttributes.PetHealth, playerAttributes.PetState, playerAttributes.PetRespawnAt = 0, "Dead", 0
+render:Fire(0.1)
+check(textItem("Leave combat to revive companion") ~= nil and textItem("Companion 0 / 60 HP") ~= nil, "Dead companion reports waiting for owner to leave combat")
+playerAttributes.PetRespawnAt, playerAttributes.InCombat = 1000 + now + 10, false
+render:Fire(0.1)
+check(textItem("Reviving in 10.0s") ~= nil, "Out-of-combat revival countdown follows the server's deadline")
+playerAttributes.PetSkillReadyAt = 0
+input:Fire({ KeyCode = roblox.Enum.KeyCode.One }, false)
+check(#commands == 8, "Dead pets cannot issue manual skill commands even with no skill cooldown")
+playerAttributes.PetRespawnAt, playerAttributes.InCombat = 0, true
+render:Fire(0.1)
+check(textItem("Leave combat to revive companion") ~= nil, "Returning to combat clears the visible revival countdown")
 
 viewport = roblox.Vector2.new(390, 844)
 camera.ViewportSize = viewport
@@ -215,6 +236,6 @@ hud:render(state)
 hud:bondAccepted()
 hud:dodgeAccepted()
 hud:meleeAccepted()
-check(#commands == 8 and boundActions.WildbondDoubleSpaceDodge == nil, "Removed HUD cannot issue input commands and releases its Space action")
+check(#commands == 8 and boundActions.WildbondShiftDodge == nil, "Removed HUD cannot issue input commands and releases its Shift action")
 check(#playerGui:GetChildren() == 0, "Delayed notifications and late updates cannot revive a destroyed HUD")
 print("HUD: " .. checks .. " reflected GUI, input, timing and cleanup checks passed; native controls/rendering require Studio")

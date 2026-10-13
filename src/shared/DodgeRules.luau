@@ -5,7 +5,6 @@ local DodgeRules = {
 	maxStepDistance = 2,
 	invulnerabilityDuration = 0.18,
 	cooldown = 4,
-	doubleTapWindow = 0.28,
 	collisionMargin = 1.25,
 }
 

@@ -6,30 +6,37 @@ local serde = require("@lune/serde")
 local Rules = require("../src/shared/CombatRules")
 local Dodge = require("../src/shared/DodgeRules")
 local Expedition = require("../src/shared/Expedition")
+local Pet = require("../src/shared/PetRules")
+local Progression = require("../src/shared/Progression")
 
 local project = serde.decode("json", fs.readFile("default.project.json"))
 local walkSpeed = assert(project.tree.StarterPlayer["$properties"].CharacterWalkSpeed)
 assert(walkSpeed > 0 and Rules.meleeDamage > 0 and Rules.meleeCooldown > 0)
-assert(Rules.petDamage > 0 and Rules.petCooldown > 0 and Dodge.cooldown > 0)
+assert(Pet.attackDamage > 0 and Pet.skillDamage > 0 and Pet.skillCooldown > 0 and Dodge.cooldown > 0)
 
--- Every contributor starts at t=0 with cooldowns ready, always lands melee, and
--- keeps an owned companion in range/LOS until its delayed strike resolves.
--- Both attack types have independent cooldowns. Enemy actions do not pause them.
--- This is an optimistic kill-time bound; it does not predict survival or mission time.
+-- Capacity lower bound: every player hit lands, pets survive and never travel.
+-- Pet basic/skill clocks are treated independently here; the actual service
+-- serializes windups. Therefore this optimistic bound need not be achievable.
+-- It does not predict survival, playtime, or the outcome with a dead pet.
 local function outgoingTime(foe, contributors, withPet)
 	local remaining = Rules.scaledHealth(foe.maxHealth, contributors)
-	local melee, pet = 0, 0
+	local melee, basic, skill = 0, 0, 0
 	while remaining > 0 do
 		local nextMelee = melee * Rules.meleeCooldown
-		local nextPet = if withPet then pet * Rules.petCooldown + Rules.petWindup else math.huge
-		local at = math.min(nextMelee, nextPet)
+		local nextBasic = if withPet then basic * Pet.attackCooldown + Pet.attackWindup else math.huge
+		local nextSkill = if withPet then skill * Pet.skillCooldown + Pet.skillWindup else math.huge
+		local at = math.min(nextMelee, nextBasic, nextSkill)
 		if math.abs(nextMelee - at) < 1e-8 then
 			remaining -= Rules.meleeDamage * contributors
 			melee += 1
 		end
-		if math.abs(nextPet - at) < 1e-8 then
-			remaining -= Rules.petDamage * contributors
-			pet += 1
+		if math.abs(nextBasic - at) < 1e-8 then
+			remaining -= Pet.attackDamage * contributors
+			basic += 1
+		end
+		if math.abs(nextSkill - at) < 1e-8 then
+			remaining -= Pet.skillDamage * contributors
+			skill += 1
 		end
 		if remaining <= 0 then return at end
 	end
@@ -39,17 +46,19 @@ end
 print("WILDBOND BALANCE AUDIT — theoretical bounds, not measured playtime")
 print("AI now patrols, chases, commits directional basic attacks, recovers and returns home. Boss specials replace basic actions; they do not execute concurrently.")
 print("The old static-AoE route profiles are retired. No expected incoming damage, survival, full-hunt duration or age-group reaction model is inferred here.")
-print(string.format("Player %.0fHP, walk %.1f; melee %d/%.2fs in %.1f studs; commanded pet %d/%.2fs in %.1f studs, %.2fs landing delay.",
-	Rules.playerMaxHealth, walkSpeed, Rules.meleeDamage, Rules.meleeCooldown, Rules.meleeRange,
-	Rules.petDamage, Rules.petCooldown, Rules.petRange, Rules.petWindup))
-print(string.format("Nominal sustained outgoing DPS %.2f melee + %.2f pet = %.2f; discrete first hits are handled in the kill-time table.",
-	Rules.meleeDamage / Rules.meleeCooldown, Rules.petDamage / Rules.petCooldown,
-	Rules.meleeDamage / Rules.meleeCooldown + Rules.petDamage / Rules.petCooldown))
-print("Outgoing bound assumes uninterrupted perfect attack inputs, ready cooldowns, range/LOS, no movement delay and all contributors synchronized from the start.")
+print(string.format("Player %.0fHP, walk %.1f; melee %d/%.2fs in %.1f studs.",
+	Rules.playerMaxHealth, walkSpeed, Rules.meleeDamage, Rules.meleeCooldown, Rules.meleeRange))
+print(string.format("Pet: %dHP, defense%d; auto basic%d/%.2fs (windup%.2fs), auto skill%d/%.2fs (windup%.2fs); revive after%.0fs continuously out of owner combat.",
+	Pet.maxHealth, Pet.defense, Pet.attackDamage, Pet.attackCooldown, Pet.attackWindup,
+	Pet.skillDamage, Pet.skillCooldown, Pet.skillWindup, Pet.reviveDelay))
+print(string.format("Nominal attack capacity %.2f player + %.2f pet basic + %.2f pet skill = %.2f damage/s before action overlap, travel or death.",
+	Rules.meleeDamage / Rules.meleeCooldown, Pet.attackDamage / Pet.attackCooldown, Pet.skillDamage / Pet.skillCooldown,
+	Rules.meleeDamage / Rules.meleeCooldown + Pet.attackDamage / Pet.attackCooldown + Pet.skillDamage / Pet.skillCooldown))
+print("Outgoing bounds assume independent pet clocks (actual windups serialize), ready cooldowns, perfect range/LOS, living pets and synchronized contributors. These are capacity bounds, not simulated fights.")
 for _, foe in Rules.foes do
 	local cooldown = if foe.boss then Rules.bossMeleeCooldown else Rules.enemyMeleeCooldown
 	local period = math.max(cooldown, Rules.enemyMeleeWindup + Rules.enemyMeleeRecover)
-	print(string.format("  %s — %s", foe.id, if foe.bounty then "bounty target" else "ambient practice enemy; no EXP/loot yet"))
+	print(string.format("  %s — %s", foe.id, if foe.bounty then "bounty target" else "ambient enemy; session coins/XP"))
 	print(string.format("  %-20s %4dHP | melee %.1fs | melee + pet %.1fs | basic %d, nominal period %.2fs, contact pressure <= %.2fHP/s, %d hits to exhaust full HP.",
 		foe.name, foe.maxHealth, outgoingTime(foe, 1, false), outgoingTime(foe, 1, true),
 		foe.meleeDamage, period, foe.meleeDamage / period, math.ceil(Rules.playerMaxHealth / foe.meleeDamage)))
@@ -79,9 +88,9 @@ print(string.format("  Enemy patrol %.1f, chase %.1f; player %.1f. Player melee 
 	Rules.patrolSpeed, Rules.chaseSpeed, walkSpeed, Rules.meleeRange, Rules.enemyMeleeRange))
 print(string.format("  Basic aim locks during %.2fs windup; walking from contact to beyond enemy reach takes >%.2fs, leaving <%.2fs to react, before latency and obstacles.",
 	Rules.enemyMeleeWindup, Rules.enemyMeleeRange / walkSpeed, Rules.enemyMeleeWindup - Rules.enemyMeleeRange / walkSpeed))
-print(string.format("  Double Space within %.2fs requests dodge: up to %.1f studs over %.2fs, up to %.2fs damage immunity, %.1fs cooldown. A wall/floor check can shorten or reject the move and end immunity early.",
-	Dodge.doubleTapWindow, Dodge.distance, Dodge.duration, Dodge.invulnerabilityDuration, Dodge.cooldown))
-print("  Double-tap input and request latency precede the accepted dodge. Immunity covers only the opening portion, not the whole movement; do not equate distance or cooldown with guaranteed evasion.")
+print(string.format("  Shift requests dodge: up to %.1f studs over %.2fs, up to %.2fs damage immunity, %.1fs cooldown. A wall/floor check can shorten or reject the move and end immunity early.",
+	Dodge.distance, Dodge.duration, Dodge.invulnerabilityDuration, Dodge.cooldown))
+print("  Request latency precedes accepted dodge. Immunity covers only the opening portion, not the whole movement; do not equate distance or cooldown with guaranteed evasion.")
 print("  Basic attacks resolve faster than dodge recharges. Walking outside reach/the locked front arc must remain usable between dodges; specials cannot require an available dodge every time.")
 if Rules.enemyMeleeWindup <= Rules.enemyMeleeRange / walkSpeed then
 	print("  WARNING: even instant walking from contact cannot leave basic reach before nominal resolution.")
@@ -119,4 +128,12 @@ for _, pet in Expedition.pets do
 	print(string.format("  %s: %d shells, %d hunts from zero if bought alone; %d cumulative hunts in catalog order.",
 		pet.name, pet.cost, math.ceil(pet.cost / Expedition.reward), math.ceil(spend / Expedition.reward)))
 end
-print("RPG levels, equipment rolls, passive buffs, pet auto-attacks and class resources are not live and do not enter these bounds. No retention or Robux revenue inference is supported.")
+print("\nSession XP/coins (no persistent inventory or shop):")
+for _, kind in { "boar", "sprout", "reed", "ancient" } do
+	local reward = Progression.rewards[kind]
+	print(string.format("  %s: %d coins + %d XP per eligible kill contribution.", kind, reward.coins, reward.xp))
+end
+for _, level in { 1, 2, 9, 19, 29, 39 } do
+	print(string.format("  Level%d ->%d needs%d XP. Levels currently change no combat stats or class access.", level, level + 1, Progression.xpToNext(level)))
+end
+print("Equipment rolls, passive buffs, evolution and class resources are not live. No retention, leveling-time or Robux revenue inference is supported.")

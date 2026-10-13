@@ -103,7 +103,8 @@ local function validateWorld(result)
 			if object.Name == "Trail" then
 				table.insert(trails, object)
 			end
-			if object.Name == "Trail" or object.Name == "CarriageApproach" or object.Name == "SideTrail" then
+			if object.Name == "Trail" or object.Name == "CarriageApproach" or object.Name == "SideTrail"
+				or object.Name == "OuterTrail" or object.Name == "CrossTrail" or object.Name == "LandmarkTrail" then
 				table.insert(walkingRoutes, object)
 			end
 			if object.CanCollide then
@@ -113,7 +114,7 @@ local function validateWorld(result)
 			table.insert(allPrompts, object)
 		end
 	end
-	check(#allParts > 100 and #allParts < 650, "Region exceeds the prototype geometry budget")
+	check(#allParts > 600 and #allParts < 1300, "Expanded region exceeds the geometry budget or lacks scenery")
 	check(island:GetAttribute("GeneratedPartCount") == #allParts, "Generated part count must include every BasePart")
 	check(island:GetAttribute("PrototypeGeometry") == true, "Prototype geometry must be identified")
 	check(island:GetAttribute("RegionName") == "Greywater Reach", "Visible region needs its mainland identity")
@@ -122,7 +123,9 @@ local function validateWorld(result)
 	local landscape = island:FindFirstChild("WoodlandLandscape")
 	check(landscape ~= nil and landscape:IsA("BasePart") and landscape.CanCollide and landscape.Size.X > 1000 and landscape.Size.Z > 1000, "Mainland must continue beneath the surrounding ridges")
 	check(#trails == 9, "Village and expedition routes must all be present")
-	check(#walkingRoutes == 13, "Carriage stop and roaming clearings need supported branch routes")
+	check(#walkingRoutes == 45, "Starting paths, outer hunting circuit, cross routes and landmarks must be connected")
+	check(island:GetAttribute("EnemySpawnCount") == #Rules.foes and #Rules.foes == 25, "Expanded mainland needs all 25 authoritative enemy spawn definitions")
+	check(island:GetAttribute("SubregionCount") == 5, "Starter core and four outer regions need distinct landmarks")
 	check(#allPrompts == 5, "Exactly five map interactions are required")
 	local expected = { start = true, ["return"] = true, moss = true, river = true, ruins = true }
 	local count = 0
@@ -142,7 +145,12 @@ local function validateWorld(result)
 	local ground = island:FindFirstChild("IslandMeadow")
 	check(ground ~= nil and ground:IsA("BasePart") and ground.CanCollide, "Playable ground must be solid")
 	check(close(ground.CFrame.UpVector.Y, 1), "Playable meadow must be level")
-	check(ground.Size.X >= 220 and ground.Size.Z >= 260, "Valley needs a larger connected playable meadow")
+	check(ground.Size.X == 550 and ground.Size.Z == 624, "Expanded mainland has explicit width and depth")
+	check(ground.Size.X * ground.Size.Z == 6 * 220 * 260, "Supported meadow area must actually increase sixfold")
+	check(island:GetAttribute("PlayableWidth") == ground.Size.X and island:GetAttribute("PlayableDepth") == ground.Size.Z,
+		"World size metadata must match solid ground geometry")
+	check(island:GetAttribute("PlayableArea") == ground.Size.X * ground.Size.Z and island:GetAttribute("AreaMultiplier") == 6
+		and island:GetAttribute("PreviousPlayableArea") == 220 * 260, "Area metadata must describe the measured expansion")
 	local groundTop = ground.CFrame.Position.Y + ground.Size.Y / 2
 	check(close(groundTop, 4), "Combat and world ground height must agree")
 	local function supported(point)
@@ -204,6 +212,20 @@ local function validateWorld(result)
 	for _, name in { "DraftHorseBody", "CarriageBed", "WaygateLintel", "ValleySideRidge", "SouthernRidge", "NorthernCliff", "DistantWoodlandRidge" } do
 		check(island:FindFirstChild(name) ~= nil, "Woodland region landmark is missing: " .. name)
 	end
+	for _, name in { "WoodcutterBack", "ReedfenPool", "FenCampAwning", "OldwatchArchBeam", "SunmeadowMill", "MillSail", "MeadowCropBed" } do
+		check(island:FindFirstChild(name) ~= nil, "Outer region is missing its distinct silhouette: " .. name)
+	end
+	local subregionIds = { westwood = false, reedfen = false, oldwatch = false, sunmeadow = false }
+	for _, object in allParts do
+		if object.Name == "OuterRegionSign" then
+			local id = object:GetAttribute("SubregionId")
+			check(subregionIds[id] == false and object:FindFirstChildOfClass("ProximityPrompt") == nil, "Every outer region gets one honest landmark sign")
+			subregionIds[id] = true
+		end
+	end
+	for id, present in subregionIds do
+		check(present, "Missing outer subregion sign: " .. id)
+	end
 
 	local bountyCount = 0
 	for _, foe in Rules.foes do
@@ -211,6 +233,28 @@ local function validateWorld(result)
 		check(supported(position), "Enemy must stand above supported ground: " .. foe.id)
 		local isClear, obstacle = clear(position, 4, groundTop + 0.3, groundTop + 8, false)
 		check(isClear, "Enemy collision clearance is blocked: " .. foe.id .. " / " .. tostring(obstacle))
+		check(supported(position + Vector3.new(Rules.leashRadius + 2, 0, 0))
+			and supported(position - Vector3.new(Rules.leashRadius + 2, 0, 0))
+			and supported(position + Vector3.new(0, 0, Rules.leashRadius + 2))
+			and supported(position - Vector3.new(0, 0, Rules.leashRadius + 2)),
+			"Every enemy's full chase leash must stay over solid ground: " .. foe.id)
+		local nearestRoad = math.huge
+		for _, route in walkingRoutes do
+			local localPoint = route.CFrame:PointToObjectSpace(position)
+			local dz = math.max(math.abs(localPoint.Z) - route.Size.Z / 2, 0)
+			nearestRoad = math.min(nearestRoad, math.sqrt(localPoint.X ^ 2 + dz ^ 2))
+		end
+		check(nearestRoad <= 45, "Enemy habitat must be discoverable from a connected road: " .. foe.id)
+		for _, box in colliders do
+			local name = box.part.Name
+			if name == "TreeTrunk" or name == "TreeCrown" or name == "TreeCrownLight" or name == "PineCrown"
+				or name == "MeadowRock" or name == "RockMoss" then
+				local x = math.clamp(position.X, box.minimum.X, box.maximum.X)
+				local z = math.clamp(position.Z, box.minimum.Z, box.maximum.Z)
+				check((position.X - x) ^ 2 + (position.Z - z) ^ 2 >= Rules.leashRadius ^ 2,
+					"Random scenery must leave the full chase leash open: " .. foe.id .. " / " .. name)
+			end
+		end
 		if foe.bounty ~= false then
 			bountyCount += 1
 			check(result.prompts[foe.id] ~= nil, "Bounty enemy needs its expedition landmark: " .. foe.id)

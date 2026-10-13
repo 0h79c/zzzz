@@ -9,7 +9,7 @@ local Rules = require(ReplicatedStorage:WaitForChild("Wildbond"):WaitForChild("C
 
 type HuntState = Rules.HuntState
 type Definition = Rules.FoeDefinition
-type Actor = { player: Player, character: Model, humanoid: Humanoid, root: BasePart }
+type Actor = { player: Player, character: Model, humanoid: Humanoid?, root: BasePart, pet: boolean?, life: number? }
 type Slam = { center: Vector3, radius: number, resolveAt: number, disc: Part }
 type Foe = {
 	definition: Definition,
@@ -20,6 +20,7 @@ type Foe = {
 	alive: boolean,
 	contributors: { [Player]: Model },
 	participants: { [Player]: boolean },
+	threatened: { [Player]: Model },
 	participantCount: number,
 	life: number,
 	engaged: boolean,
@@ -83,10 +84,6 @@ local function place(foe: Foe, position: Vector3, direction: Vector3)
 		object.Position = object.CFrame.Position -- Also keeps reflected/headless Instances consistent.
 	end
 	foe.model:SetAttribute("FacingDirection", foe.facing)
-end
-
-local function takeDamage(source: Actor, amount: number, at: number)
-	if Rules.canTakeDamage(at, source.character:GetAttribute("DodgeUntil")) then source.humanoid:TakeDamage(amount) end
 end
 
 local function part(
@@ -254,7 +251,7 @@ local function buildFoe(parent: Instance, definition: Definition, now: number): 
 	end
 	return {
 		definition = definition, model = model, root = body, health = definition.maxHealth,
-		maxHealth = definition.maxHealth, alive = true, contributors = {}, participants = {}, participantCount = 0, life = 1,
+		maxHealth = definition.maxHealth, alive = true, contributors = {}, participants = {}, threatened = {}, participantCount = 0, life = 1,
 		engaged = false, lastNearby = now, pattern = 0, nextSlam = math.huge,
 		respawnAt = nil, slam = nil, transparencies = transparencies,
 		label = label, healthText = healthText, healthFill = fill, highlight = highlight, flashUntil = 0,
@@ -291,6 +288,9 @@ local function lineOfSight(source: Actor, foe: Foe): boolean
 	local parameters = RaycastParams.new()
 	parameters.FilterType = Enum.RaycastFilterType.Exclude
 	parameters.FilterDescendantsInstances = { source.character }
+	if source.pet and source.player.Character then
+		parameters.FilterDescendantsInstances = { source.character, source.player.Character }
+	end
 	parameters.RespectCanCollide = true
 	local from = source.root.Position
 	local result = Workspace:Raycast(from, foe.root.Position - from, parameters)
@@ -299,7 +299,7 @@ end
 
 function CombatService.start(
 	getState: (Player) -> HuntState?, onDefeat: (Player, string) -> (),
-	onBondFx: ((Player, Vector3) -> ())?
+	onBondFx: ((Player, Vector3) -> ())?, onKill: ((Player, Definition) -> ())?
 )
 	local destroyed = false
 	local folder = Instance.new("Folder")
@@ -308,6 +308,27 @@ function CombatService.start(
 	local foes: { Foe } = {}
 	local lastAttack: { [Player]: number } = {}
 	local lastBond: { [Player]: number } = {}
+	local combatUntil: { [Player]: number } = {}
+	local companions: any = nil
+	local function markCombat(player: Player, at: number)
+		combatUntil[player] = at + 1.2
+	end
+	local function currentTarget(saved: Actor): Actor?
+		if saved.pet then
+			local current = companions and companions.actor(saved.player)
+			return if current and current.character == saved.character and current.life == saved.life then current else nil
+		end
+		local current = actor(saved.player)
+		return if current and current.character == saved.character then current else nil
+	end
+	local function takeDamage(source: Actor, amount: number, at: number)
+		markCombat(source.player, at)
+		if source.pet then
+			if companions then companions.damage(source, amount, at) end
+		elseif source.humanoid and Rules.canTakeDamage(at, source.character:GetAttribute("DodgeUntil")) then
+			source.humanoid:TakeDamage(amount)
+		end
+	end
 	local now = Workspace:GetServerTimeNow()
 	for _, definition in Rules.foes do
 		table.insert(foes, buildFoe(folder, definition, now))
@@ -324,6 +345,10 @@ function CombatService.start(
 		visible(foe, false)
 		for player, character in foe.contributors do
 			local source = actor(player)
+			if source and source.character == character and Rules.eligible(getState(player), true, foe.definition.id)
+				and Rules.inRange(point(source.root.Position), point(foe.root.Position), Rules.rewardRange) and onKill then
+				onKill(player, foe.definition)
+			end
 			if source and source.character == character and Rules.canReward(getState(player), true, player.Parent == Players, true,
 				foe.definition.id, point(source.root.Position), point(foe.root.Position)) then
 				onDefeat(player, foe.definition.id)
@@ -337,12 +362,15 @@ function CombatService.start(
 		local nearest: Actor? = nil
 		local best = Rules.aggroRange * Rules.aggroRange
 		for _, player in Players:GetPlayers() do
-			local source = actor(player)
-			if source and Rules.eligible(getState(player), true, foe.definition.id)
-				and Rules.inRange(point(source.root.Position), point(foe.home), Rules.leashRadius) then
-				local distance = Rules.distanceSquared(point(source.root.Position), point(foe.root.Position))
-				if distance <= Rules.aggroRange * Rules.aggroRange and lineOfSight(source, foe) then
-					if distance <= best then nearest, best = source, distance end
+			local owner = actor(player)
+			if not owner or not Rules.eligible(getState(player), true, foe.definition.id) then continue end
+			local candidates = { owner }
+			local companion = companions and companions.actor(player)
+			if companion then table.insert(candidates, companion) end
+			for _, source in candidates do
+				if Rules.inRange(point(source.root.Position), point(foe.home), Rules.leashRadius) then
+					local distance = Rules.distanceSquared(point(source.root.Position), point(foe.root.Position))
+					if distance <= best and lineOfSight(source, foe) then nearest, best = source, distance end
 				end
 			end
 		end
@@ -360,7 +388,7 @@ function CombatService.start(
 		foe.alive, foe.engaged = true, false
 		foe.health, foe.maxHealth = foe.definition.maxHealth, foe.definition.maxHealth
 		foe.contributors, foe.respawnAt, foe.flashUntil, foe.pattern = {}, nil, 0, 0
-		foe.participants, foe.participantCount = {}, 0
+		foe.participants, foe.participantCount, foe.threatened = {}, 0, {}
 		foe.lastNearby, foe.nextSlam = at, math.huge
 		foe.melee, foe.nextMelee, foe.recoverUntil = nil, at, at
 		place(foe, foe.home, Vector3.new(0, 0, 1))
@@ -374,6 +402,8 @@ function CombatService.start(
 
 	local function damage(foe: Foe, player: Player, source: Actor, amount: number, at: number)
 		engage(foe, at)
+		markCombat(player, at)
+		foe.threatened[player] = source.character
 		if not foe.participants[player] then
 			foe.participants[player] = true
 			foe.participantCount = math.min(foe.participantCount + 1, Rules.maxGroupSize)
@@ -496,6 +526,9 @@ function CombatService.start(
 			if nearest then
 				engage(foe, at)
 				foe.lastNearby = at
+				local owner = actor(nearest.player)
+				if owner then foe.threatened[nearest.player] = owner.character end
+				markCombat(nearest.player, at)
 			elseif foe.engaged and at >= foe.lastNearby + Rules.encounterResetDelay then
 				clearSlam(foe)
 				foe.melee = nil
@@ -511,6 +544,11 @@ function CombatService.start(
 						and Rules.inSlam(point(source.root.Position), point(slam.center), slam.radius) and lineOfSight(source, foe) then
 						takeDamage(source, foe.definition.slamDamage, at)
 					end
+					local pet = companions and companions.actor(player)
+					if pet and source and Rules.eligible(getState(player), true, foe.definition.id)
+						and Rules.inSlam(point(pet.root.Position), point(slam.center), slam.radius) and lineOfSight(pet, foe) then
+						takeDamage(pet, foe.definition.slamDamage, at)
+					end
 				end
 				clearSlam(foe)
 				foe.nextSlam = at + Rules.slamCooldown
@@ -520,7 +558,7 @@ function CombatService.start(
 			end
 			local melee = foe.melee
 			if melee and at >= melee.resolveAt then
-				local target = actor(melee.target.player)
+				local target = currentTarget(melee.target)
 				if target and target.character == melee.target.character and Rules.eligible(getState(target.player), true, foe.definition.id)
 					and Rules.inEnemyMelee(point(target.root.Position), point(foe.root.Position), point(foe.facing))
 					and lineOfSight(target, foe) then takeDamage(target, foe.definition.meleeDamage, at) end
@@ -570,6 +608,7 @@ function CombatService.start(
 	local leaving = Players.PlayerRemoving:Connect(function(player: Player)
 		lastAttack[player] = nil
 		lastBond[player] = nil
+		combatUntil[player] = nil
 		for _, foe in foes do
 			foe.contributors[player] = nil
 		end
@@ -604,11 +643,13 @@ function CombatService.start(
 	end
 
 	function service.cooldown(player: Player): number
+		if companions then return companions.cooldown(player) end
 		local previous = lastBond[player]
 		return if previous then math.max(0, previous + Rules.petCooldown - Workspace:GetServerTimeNow()) else 0
 	end
 
 	function service.bond(player: Player): (boolean, string)
+		if companions then return companions.skill(player) end
 		if destroyed then return false, "Combat is unavailable." end
 		local source, state = actor(player), getState(player)
 		if not source then return false, "Wait until your character is ready." end
@@ -637,6 +678,69 @@ function CombatService.start(
 		end)
 		if onBondFx then onBondFx(player, selected.root.Position) end
 		return true, "Companion strike!"
+	end
+
+
+	-- Companion hooks use server-created actor roots. No remote supplies a target or damage.
+	function service.attachCompanions(adapter: any)
+		companions = adapter
+	end
+
+	function service.inCombat(player: Player): boolean
+		local owner = actor(player)
+		if destroyed or not owner then return false end
+		for _, foe in foes do
+			if foe.alive and foe.engaged and foe.state ~= "Return" and foe.threatened[player] == owner.character
+				and Rules.inRange(point(owner.root.Position), point(foe.home), Rules.leashRadius)
+				and Rules.inRange(point(owner.root.Position), point(foe.root.Position), Rules.aggroRange)
+				and lineOfSight(owner, foe) then return true end
+		end
+		return Workspace:GetServerTimeNow() < (combatUntil[player] or -math.huge)
+	end
+
+	function service.selectCompanionTarget(player: Player, petRoot: BasePart, radius: number, provokedOnly: boolean): any
+		local owner, state = actor(player), getState(player)
+		if destroyed or not owner or not state then return nil end
+		local selected, best = nil, radius * radius
+		local source: Actor = { player = player, character = petRoot.Parent :: Model, root = petRoot, pet = true }
+		for _, foe in foes do
+			if not foe.alive or foe.state == "Return" or not Rules.eligible(state, true, foe.definition.id) then continue end
+			if provokedOnly and (not foe.engaged or foe.threatened[player] ~= owner.character) then continue end
+			if not Rules.inRange(point(owner.root.Position), point(foe.root.Position), companions.ownerLeash) then continue end
+			local distance = Rules.distanceSquared(point(petRoot.Position), point(foe.root.Position))
+			if distance <= best and lineOfSight(source, foe) then selected, best = foe, distance end
+		end
+		return if selected then { id = selected.definition.id, life = selected.life, model = selected.model, position = selected.root.Position } else nil
+	end
+
+	function service.engageCompanionTarget(player: Player, target: any)
+		local owner = actor(player)
+		if destroyed or not owner then return end
+		for _, foe in foes do
+			if foe.model == target.model and foe.life == target.life and foe.alive and foe.state ~= "Return" then
+				local at = Workspace:GetServerTimeNow()
+				engage(foe, at)
+				foe.threatened[player] = owner.character
+				markCombat(player, at)
+			end
+		end
+	end
+
+	function service.hitCompanionTarget(player: Player, petRoot: BasePart, target: any, amount: number, radius: number): boolean
+		local owner, state = actor(player), getState(player)
+		if destroyed or not owner or not state then return false end
+		local pet = companions and companions.actor(player)
+		if not pet or pet.root ~= petRoot then return false end
+		for _, foe in foes do
+			if foe.model == target.model and foe.life == target.life and foe.alive and foe.state ~= "Return"
+				and Rules.eligible(state, true, foe.definition.id)
+				and Rules.inRange(point(petRoot.Position), point(foe.root.Position), radius)
+				and Rules.inRange(point(owner.root.Position), point(foe.root.Position), companions.ownerLeash) and lineOfSight(pet, foe) then
+				damage(foe, player, owner, amount, Workspace:GetServerTimeNow())
+				return true
+			end
+		end
+		return false
 	end
 
 	function service.destroy()

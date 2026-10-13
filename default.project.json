@@ -11,7 +11,8 @@
     "StarterPlayer": {
       "$properties": {
         "CharacterWalkSpeed": 20,
-        "CharacterJumpHeight": 7.2
+        "CharacterJumpHeight": 7.2,
+        "EnableMouseLockOption": false
       },
       "StarterPlayerScripts": {
         "WildbondClient": { "$path": "src/client" }

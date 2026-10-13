@@ -1,6 +1,9 @@
 --!nonstrict
--- Original local C0 poses bypass Animator's Transform writes. Server effects
--- authorize the punch, impact and dodge; this module never moves the root part.
+-- Native procedural animation supports legacy Motor6D and upgraded R15
+-- AnimationConstraint joints. Restore our layer before Animator evaluates, then
+-- apply it at PreSimulation after Animator; no attachment/C0 mutation or asset
+-- upload is needed. Server effects authorize strikes and root movement.
+-- https://create.roblox.com/docs/reference/engine/classes/AnimationConstraint
 local RunService = game:GetService("RunService")
 local View = {}
 local punchDuration = 0.42
@@ -16,7 +19,7 @@ end
 function View.start(player, dodgeRules)
 	local dodgeDuration = (dodgeRules and dodgeRules.duration) or 0.3
 	local stopped, character = false, player.Character
-	local arms, torso, rootJoint, states = {}, nil, nil, {}
+	local arms, legs, torso, rootJoint, states = {}, {}, nil, nil, {}
 	local punch, dash, impact, nextLeft, scanAt = nil, nil, nil, false, 0
 	local effects = Instance.new("Folder")
 	effects.Name = "LocalPlayerCombatEffects"
@@ -31,7 +34,8 @@ function View.start(player, dodgeRules)
 		part.Transparency, part.Parent = 1, effects
 		return part
 	end
-	local trail, sparks = {}, {}
+	local trail, sparks, wake = {}, {}, {}
+	for index = 1, 2 do wake[index] = piece("DodgeWake" .. index, Vector3.new(0.06, 0.06, 3)) end
 	for index = 1, 4 do
 		trail[index] = piece("FistTrail" .. index, Vector3.new(0.08, 0.08, 0.3))
 		sparks[index] = piece("HitSpark" .. index, Vector3.new(0.1, 0.1, 0.45))
@@ -46,36 +50,61 @@ function View.start(player, dodgeRules)
 	damageText.TextColor3, damageText.TextStrokeTransparency = Color3.fromRGB(243, 229, 178), 0.5
 	damageText.Text, damageText.Parent = "", popup
 	local function hideTrail() for _, part in trail do part.Transparency = 1 end end
+	local function hideWake() for _, part in wake do part.Transparency = 1 end end
 	local function hideImpact()
 		for _, part in sparks do part.Transparency = 1 end
 		popup.Enabled = false
 	end
 	local function restorePose()
 		for joint, state in states do
-			if joint.Parent and sameFrame(joint.C0, state.applied) then joint.C0 = state.base end
+			if joint.Parent and sameFrame(joint.Transform, state.applied) then joint.Transform = state.base end
 		end
 		table.clear(states)
 	end
+	local function jointFrames(joint)
+		if joint:IsA("AnimationConstraint") then
+			local a, b = joint.Attachment0, joint.Attachment1
+			if a and b and a.Parent and b.Parent and a.Parent:IsA("BasePart") and b.Parent:IsA("BasePart") then
+				return a.Parent, b.Parent, a.CFrame, b.CFrame
+			end
+		elseif joint:IsA("Motor6D") and joint.Part0 and joint.Part1 then
+			return joint.Part0, joint.Part1, joint.C0, joint.C1
+		end
+		return nil
+	end
 	local function discoverJoints()
-		arms, torso, rootJoint = { right = {}, left = {} }, nil, nil
+		arms, legs, torso, rootJoint = { right = {}, left = {} }, { right = {}, left = {} }, nil, nil
 		if not character then return end
+		local count, upgraded = 0, 0
 		for _, item in character:GetDescendants() do
-			if item:IsA("Motor6D") then
-				if item.Name == "Root" or item.Name == "RootJoint" then rootJoint = item end
-				if item.Name == "Waist" then torso = item end
+			if item:IsA("Motor6D") or item:IsA("AnimationConstraint") then
+				local _, child = jointFrames(item)
+				if not child then continue end
+				count += 1
+				if item:IsA("AnimationConstraint") then upgraded += 1 end
+				-- Match connected limb names as well as joint names: upgraded
+				-- constraints and custom rig exports can rename the joint itself.
+				if child.Name == "LowerTorso" or child.Name == "Torso" or item.Name == "Root" or item.Name == "RootJoint" then rootJoint = item end
+				if child.Name == "UpperTorso" or item.Name == "Waist" then torso = item end
 				for _, side in { "right", "left" } do
 					local prefix = if side == "right" then "Right" else "Left"
-					if item.Name == prefix .. "Shoulder" or item.Name == prefix .. " Shoulder" then arms[side].shoulder = item end
-					if item.Name == prefix .. "Elbow" then arms[side].elbow = item end
-					if item.Name == prefix .. "Wrist" then arms[side].wrist = item end
+					if child.Name == prefix .. "UpperArm" or child.Name == prefix .. " Arm" or item.Name == prefix .. "Shoulder" or item.Name == prefix .. " Shoulder" then arms[side].shoulder = item end
+					if child.Name == prefix .. "LowerArm" or item.Name == prefix .. "Elbow" then arms[side].elbow = item end
+					if child.Name == prefix .. "Hand" or item.Name == prefix .. "Wrist" then arms[side].wrist = item end
+					if child.Name == prefix .. "UpperLeg" or child.Name == prefix .. " Leg" or item.Name == prefix .. "Hip" or item.Name == prefix .. " Hip" then legs[side].hip = item end
+					if child.Name == prefix .. "LowerLeg" or item.Name == prefix .. "Knee" then legs[side].knee = item end
+					if child.Name == prefix .. "Foot" or item.Name == prefix .. "Ankle" then legs[side].ankle = item end
 				end
 			end
 		end
 		torso = torso or rootJoint
+		character:SetAttribute("WildbondCombatJointCount", count)
+		character:SetAttribute("WildbondCombatRig", if upgraded > 0 then "AnimationConstraint" elseif count > 0 then "Motor6D" else "Waiting for rig")
+		character:SetAttribute("WildbondCombatReady", arms.right.shoulder ~= nil and arms.left.shoulder ~= nil and rootJoint ~= nil and legs.right.hip ~= nil and legs.left.hip ~= nil)
 		scanAt = os.clock() + 0.5
 	end
 	local function setCharacter(nextCharacter)
-		restorePose(); hideTrail(); hideImpact()
+		restorePose(); hideTrail(); hideImpact(); hideWake()
 		punch, dash, impact, character, nextLeft = nil, nil, nil, nextCharacter, false
 		discoverJoints()
 	end
@@ -90,22 +119,29 @@ function View.start(player, dodgeRules)
 	end
 	local function compose(joint, rotation)
 		if not joint or not joint.Parent then return end
-		local base, previous = joint.C0, states[joint]
+		local _, _, c0 = jointFrames(joint)
+		if not c0 then return end
+		local base = joint.Transform
+		local previous = states[joint]
 		if previous and sameFrame(base, previous.applied) then base = previous.base end
-		-- Rotate in Part0 coordinates around the existing shoulder pivot, before
-		-- C0's orientation. This makes +X raise the arm FORWARD on R6 and R15.
-		joint.C0 = CFrame.new(base.Position) * rotation * base.Rotation
-		states[joint] = { base = base, applied = joint.C0 }
+		-- Convert Part0-space rotations into the attachment's local axes.
+		-- R6 shoulder/hip attachments have different axes from R15.
+		joint.Transform = c0.Rotation:Inverse() * rotation * c0.Rotation * base
+		states[joint] = { base = base, applied = joint.Transform }
 	end
 	local function fistPosition(arm)
 		local joint = arm.shoulder
-		if not joint or not joint.Part0 or not joint.Part1 then return nil end
-		local frame = joint.Part0.CFrame * joint.C0 * joint.Transform * joint.C1:Inverse()
-		local part = joint.Part1
+		if not joint then return nil end
+		local parent, part, c0, c1 = jointFrames(joint)
+		if not parent then return nil end
+		local frame = parent.CFrame * c0 * joint.Transform * c1:Inverse()
 		for _, nextJoint in { arm.elbow, arm.wrist } do
-			if nextJoint and nextJoint.Part0 == part and nextJoint.Part1 then
-				frame = frame * nextJoint.C0 * nextJoint.Transform * nextJoint.C1:Inverse()
-				part = nextJoint.Part1
+			if nextJoint then
+				local nextParent, nextPart, nextC0, nextC1 = jointFrames(nextJoint)
+				if nextParent == part then
+					frame = frame * nextC0 * nextJoint.Transform * nextC1:Inverse()
+					part = nextPart
+				end
 			end
 		end
 		return frame:PointToWorldSpace(Vector3.new(0, -part.Size.Y * 0.45, 0))
@@ -114,17 +150,28 @@ function View.start(player, dodgeRules)
 		if stopped then return end
 		local root, now = rootPart(), os.clock()
 		if not root then
-			restorePose(); hideTrail(); hideImpact()
+			restorePose(); hideTrail(); hideImpact(); hideWake()
 			punch, dash, impact = nil, nil, nil
 			return
 		end
-		local activeArm = punch and arms[punch.side]
-		local missing = activeArm and (not activeArm.shoulder or not activeArm.shoulder.Parent
-			or (activeArm.shoulder.Part1 and string.find(activeArm.shoulder.Part1.Name, "UpperArm", 1, true)
-				and (not activeArm.elbow or not activeArm.wrist)))
+		local function incomplete(limb, primary, second, third, r15Part)
+			local joint = limb and limb[primary]
+			if not joint or not joint.Parent then return true end
+			local _, child = jointFrames(joint)
+			return child and string.find(child.Name, r15Part, 1, true) ~= nil
+				and (not limb[second] or not limb[second].Parent or not limb[third] or not limb[third].Parent)
+		end
+		local missing = punch and incomplete(arms[punch.side], "shoulder", "elbow", "wrist", "UpperArm")
+		if dash then
+			missing = missing or not rootJoint or not rootJoint.Parent
+			for _, side in { "right", "left" } do
+				missing = missing or incomplete(arms[side], "shoulder", "elbow", "wrist", "UpperArm")
+					or incomplete(legs[side], "hip", "knee", "ankle", "UpperLeg")
+			end
+		end
 		if now >= scanAt or missing then discoverJoints() end
 		if punch and now - punch.started >= punchDuration then punch = nil; hideTrail() end
-		if dash and now - dash.started >= dodgeDuration then dash = nil end
+		if dash and now - dash.started >= dodgeDuration then dash = nil; hideWake() end
 		restorePose()
 		local torsoPose = CFrame.identity
 		if punch then
@@ -169,8 +216,27 @@ function View.start(player, dodgeRules)
 		if dash then
 			local strength = math.sin(math.clamp((now - dash.started) / dodgeDuration, 0, 1) * math.pi)
 			local direction = root.CFrame:VectorToObjectSpace(dash.direction)
-			local lean = CFrame.Angles(-direction.Z * math.rad(28) * strength, 0, -direction.X * math.rad(30) * strength)
-			if rootJoint == torso then torsoPose *= lean else compose(rootJoint, lean) end
+			local across = Vector3.new(-dash.direction.Z, 0, dash.direction.X)
+			for index, part in wake do
+				local position = root.Position - dash.direction * 1.6 + across * (if index == 1 then -1.15 else 1.15)
+				part.CFrame = CFrame.lookAt(position, position + dash.direction)
+				part.Size = Vector3.new(0.06, 0.06, 1 + strength * 4)
+				part.Transparency = 0.9 - strength * 0.35
+			end
+			local lean = CFrame.new(0, -0.35 * strength, 0) * CFrame.Angles(direction.Z * math.rad(32) * strength, 0, -direction.X * math.rad(30) * strength)
+			if rootJoint == torso then torsoPose = lean * torsoPose else compose(rootJoint, lean) end
+			for _, side in { "right", "left" } do
+				local sign = if side == "right" then 1 else -1
+				local stride = math.sin((now - dash.started) / dodgeDuration * math.pi * 2) * sign * 24
+				local leg, arm = legs[side], arms[side]
+				compose(leg.hip, CFrame.Angles(math.rad(30 + stride) * strength, 0, 0))
+				compose(leg.knee, CFrame.Angles(math.rad(-65) * strength, 0, 0))
+				compose(leg.ankle, CFrame.Angles(math.rad(25) * strength, 0, 0))
+				if not punch or punch.side ~= side then
+					compose(arm.shoulder, CFrame.Angles(math.rad(-30) * strength, 0, math.rad(sign * 10) * strength))
+					compose(arm.elbow, CFrame.Angles(math.rad(85) * strength, 0, 0))
+				end
+			end
 		end
 		if punch or dash then compose(torso, torsoPose) end
 		if impact then
@@ -185,7 +251,10 @@ function View.start(player, dodgeRules)
 			if age >= 0.6 then impact = nil; hideImpact() end
 		end
 	end
-	local poseConnection = (RunService.PreSimulation or RunService.RenderStepped):Connect(update)
+	-- PreAnimation restores the previous cosmetic layer before Animator runs.
+	-- PreSimulation then applies the fresh pose to BOTH supported joint types.
+	local beforeAnimation = RunService.PreAnimation:Connect(restorePose)
+	local poseConnection = RunService.PreSimulation:Connect(update)
 	local function attackFx(target, hit, damage)
 		if stopped or not rootPart() then return end
 		hideTrail()
@@ -202,7 +271,7 @@ function View.start(player, dodgeRules)
 	local function cleanup()
 		if stopped then return end
 		stopped = true
-		poseConnection:Disconnect(); added:Disconnect(); removed:Disconnect()
+		poseConnection:Disconnect(); beforeAnimation:Disconnect(); added:Disconnect(); removed:Disconnect()
 		restorePose(); effects:Destroy()
 		character = nil
 	end

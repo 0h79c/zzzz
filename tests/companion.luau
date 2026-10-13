@@ -1,228 +1,260 @@
--- Executes the actual view against Lune's Roblox instance/property reflection.
--- Engine signals, Player state, and raycast results are explicit test doubles.
-local Roblox = require("@lune/roblox")
+-- Executes the actual view with reflected Roblox instances and explicit
+-- streaming/clock doubles. Native rendering must still be checked in Studio.
+local roblox = require("@lune/roblox")
 local fs = require("@lune/fs")
-local checks = 0
-
+local luau = require("@lune/luau")
+local checks, now = 0, 0
 local function check(condition, message)
 	assert(condition, message)
 	checks += 1
 end
-
 local function signal()
-	local subscriptions = {}
+	local listeners = {}
 	return {
 		Connect = function(_, callback)
-			local subscription = { callback = callback, connected = true }
-			table.insert(subscriptions, subscription)
-			return {
-				Disconnect = function()
-					subscription.connected = false
-				end,
-			}
+			local connection = { active = true }
+			function connection:Disconnect() self.active = false end
+			listeners[connection] = callback
+			return connection
 		end,
 		Fire = function(_, ...)
-			for _, subscription in subscriptions do
-				if subscription.connected then
-					subscription.callback(...)
-				end
-			end
+			for connection, callback in listeners do if connection.active then callback(...) end end
 		end,
-		Active = function()
+		Count = function()
 			local count = 0
-			for _, subscription in subscriptions do
-				if subscription.connected then
-					count += 1
-				end
-			end
+			for connection in listeners do if connection.active then count += 1 end end
 			return count
 		end,
 	}
 end
-
-local render, added, removed, equipped = signal(), signal(), signal(), signal()
-local scene = Roblox.Instance.new("Workspace")
-local raycastCount, lastRaycastParameters = 0, nil
-Roblox.implementMethod("Workspace", "Raycast", function(_, _, direction, parameters)
-	check(direction.Y < 0, "Ground sampling points downward")
-	raycastCount += 1
-	lastRaycastParameters = parameters
-	return { Position = Roblox.Vector3.new(0, 4, 0) }
-end)
-
-local function characterAt(position)
-	local character = Roblox.Instance.new("Model")
-	local root = Roblox.Instance.new("Part")
-	root.Name = "HumanoidRootPart"
-	-- Lune stores these independently; Studio synchronizes them.
-	root.CFrame = Roblox.CFrame.new(position)
-	root.Position = position
-	root.Parent = character
-	return character, root
+local events = {}
+local function event(item, name)
+	events[item] = events[item] or {}
+	events[item][name] = events[item][name] or signal()
+	return events[item][name]
 end
-
-local character, root = characterAt(Roblox.Vector3.new(0, 6.5, 35))
-local petId = "mosswolf"
-local player = {
-	Character = character,
-	CharacterAdded = added,
-	CharacterRemoving = removed,
-	GetAttribute = function(_, attribute)
-		check(attribute == "CompanionId", "Reads the equipped companion attribute")
-		return petId
-	end,
-	GetAttributeChangedSignal = function(_, attribute)
-		check(attribute == "CompanionId", "Subscribes to equipped companion changes")
-		return equipped
-	end,
-}
-local environment = setmetatable({
-	game = {
-		GetService = function(_, name)
-			check(name == "RunService", "Client view only requests RunService")
-			return { RenderStepped = render }
-		end,
-	},
+for _, name in { "ChildAdded", "ChildRemoved" } do
+	roblox.implementProperty("Instance", name, function(item) return event(item, name) end)
+end
+roblox.implementMethod("Instance", "GetPropertyChangedSignal", function(item, name) return event(item, name) end)
+roblox.implementMethod("Workspace", "GetServerTimeNow", function() return now end)
+local scene, render = roblox.Instance.new("Workspace"), signal()
+local player = { UserId = 7, Character = nil }
+local environment = {
+	game = { GetService = function(_, name) assert(name == "RunService"); return { RenderStepped = render } end },
 	workspace = scene,
-	Instance = Roblox.Instance,
-	Color3 = Roblox.Color3,
-	CFrame = Roblox.CFrame,
-	Vector3 = Roblox.Vector3,
-	Enum = Roblox.Enum,
-	RaycastParams = { new = function() return {} end },
-}, { __index = getfenv() })
-
-local constructor = assert(loadstring(fs.readFile("src/client/CompanionView.luau"), "CompanionView"))
-setfenv(constructor, environment)
-local CompanionView = constructor()
+}
+for _, name in { "Instance", "CFrame", "Vector3", "Color3", "Enum", "UDim2" } do environment[name] = roblox[name] end
+local CompanionView = luau.load(fs.readFile("src/client/CompanionView.luau"), { environment = environment, debugName = "CompanionView" })()
 local cleanup, strike = CompanionView.start(player)
-check(type(strike) == "function", "View exposes a server-triggered local strike animation")
-
+local container = assert(scene:FindFirstChild("LocalCompanionVisuals"))
 local function step(frames, dt)
-	for _ = 1, frames do
-		render:Fire(dt)
-	end
+	for _ = 1, frames do now += dt; render:Fire(dt) end
 end
+local function moveTo(root, frame)
+	root.CFrame, root.Position = frame, frame.Position
+end
+step(1, 1 / 60)
+check(#container:GetChildren() == 0, "No cosmetic pet is invented while server actors are absent")
+check(type(strike) == "function", "Legacy Bond effect callback remains API-compatible")
 
+local folder = roblox.Instance.new("Folder")
+folder.Name, folder.Parent = "PendingCompanions", scene
+scene.ChildAdded:Fire(folder)
+local actor = roblox.Instance.new("Model")
+actor.Name, actor.Parent = "Companion_7", folder
+actor:SetAttribute("OwnerUserId", 7)
+folder.ChildAdded:Fire(actor)
+check(#container:GetChildren() == 0, "Unrelated folders cannot create local pets")
+folder.Name = "WildbondCompanions"
+event(folder, "Name"):Fire()
+local visual = assert(container:FindFirstChild(actor.Name))
+step(1, 1 / 60)
+check(visual.Parent == nil, "A streamed model with no PrimaryPart safely hides its pending visual")
+local root = roblox.Instance.new("Part")
+root.Name, root.Transparency, root.Anchored, root.CanCollide = "Root", 1, true, false
+moveTo(root, roblox.CFrame.new(0, 5.35, 0))
+root.Parent, actor.PrimaryPart = actor, root
+step(1, 1 / 60)
+check(visual.Parent == nil, "Root arrival alone does not invent an unknown pet type")
+actor:SetAttribute("PetId", "mosswolf")
+step(1, 1 / 60)
+check(visual.Parent == nil, "Known species arriving before HP does not display an invented living pet")
+actor:SetAttribute("Health", 60)
+actor:SetAttribute("MaxHealth", 60)
+actor:SetAttribute("State", "Follow")
+actor:SetAttribute("ActionStartedAt", now)
+actor:SetAttribute("ActionDuration", 0)
+step(1, 1 / 60)
+check(visual.Parent == container and visual:GetAttribute("CosmeticOnly") == true, "Server actor creates a nonauthoritative cosmetic model")
+check(visual:GetAttribute("PetId") == "mosswolf" and visual:GetAttribute("OwnerUserId") == 7, "Visual identifies its server pet and owner")
+local body = assert(visual:FindFirstChild("Body"))
+check((body.CFrame.Position - root.CFrame.Position).Magnitude < 0.001, "Pet body starts at its server actor, even without a player character")
+check(visual.PrimaryPart == body, "Body anchors the visual health billboard")
+local billboard = assert(visual:FindFirstChild("PetHealth"))
+check(billboard.Enabled and billboard.Adornee == body and billboard.MaxDistance == 85, "Owner pet has a health billboard attached to its visual body")
+check(billboard.HealthLabel.Text == "Moss Wolf  60 / 60", "Health label uses the server pet's separate HP")
 local function assertCosmetic(model)
-	check(model:GetAttribute("CosmeticOnly") == true, "Companion is marked cosmetic")
-	for _, piece in model:GetChildren() do
-		check(piece:IsA("BasePart"), "Procedural companion contains parts")
-		check(piece.Anchored and not piece.CanCollide and not piece.CanQuery and not piece.CanTouch, "Cosmetic geometry cannot block physics or queries")
+	for _, item in model:GetDescendants() do
+		if item:IsA("BasePart") then
+			check(item.Anchored and not item.CanCollide and not item.CanQuery and not item.CanTouch, "Articulation geometry cannot block or participate in combat queries")
+		end
 	end
 end
-
-step(60, 1 / 60)
-local model = assert(scene:FindFirstChild("LocalTrailCompanion"))
-check(model.PrimaryPart == model.Body, "Body is the model's primary part")
-check(model:GetAttribute("CompanionId") == "mosswolf", "Default equipped wolf is represented")
-assertCosmetic(model)
-check(raycastCount > 0 and raycastCount < 20, "Ground sampling is throttled")
-check(lastRaycastParameters.FilterType == Roblox.Enum.RaycastFilterType.Exclude, "Ground sampling excludes the character and companion")
-check(lastRaycastParameters.FilterDescendantsInstances[1] == model and lastRaycastParameters.FilterDescendantsInstances[2] == character, "Raycast filters reference active models")
-local wolfColor, wolfLength, wolfEarHeight = model.Body.Color, model.Body.Size.Z, model.Ear.Size.Y
-
-local oldPosition = model.Body.CFrame.Position
-root.CFrame = Roblox.CFrame.new(10, 6.5, 35)
-root.Position = Roblox.Vector3.new(10, 6.5, 35)
+assertCosmetic(visual)
+actor:SetAttribute("Health", 21)
 step(1, 1 / 60)
-local firstPosition = model.Body.CFrame.Position
-check(firstPosition.X > oldPosition.X and firstPosition.X < oldPosition.X + 10, "Follower moves smoothly toward a walking character")
+check(billboard.HealthLabel.Text == "Moss Wolf  21 / 60" and math.abs(billboard.HealthBar.Fill.Size.X.Scale - 0.35) < 0.001, "Pet health changes update both text and fill without touching server HP")
+actor:SetAttribute("Health", 100)
+step(1, 1 / 60)
+check(billboard.HealthBar.Fill.Size.X.Scale == 1, "Transient over-max replicated HP cannot overflow the bar")
+actor:SetAttribute("Health", 60)
+local before = body.CFrame.Position
+moveTo(root, roblox.CFrame.new(8, 5.35, 0))
+step(1, 1 / 60)
+check(body.CFrame.Position.X > before.X and body.CFrame.Position.X < 8, "Server movement is interpolated instead of following a local player offset")
+local leg = assert(visual:FindFirstChild("Leg"))
+local walkingPose = body.CFrame:ToObjectSpace(leg.CFrame)
+step(1, 1 / 60)
+check(body.CFrame:ToObjectSpace(leg.CFrame) ~= walkingPose, "Replicated movement produces articulated four-legged gait")
 step(90, 1 / 60)
-local target = Roblox.Vector3.new(13.2, 5.1, 38.6)
-check((model.Body.CFrame.Position - target).Magnitude < 0.03, "Follower converges beside and behind the character on the sampled ground")
-
-local playerFrame = root.CFrame
-local strikeTarget = Roblox.Vector3.new(10, 7, 26)
-local startDistance = (model.Body.CFrame.Position - strikeTarget).Magnitude
-strike(strikeTarget)
-step(6, 1 / 60)
-check((model.Body.CFrame.Position - strikeTarget).Magnitude < startDistance - 3, "Bond pounce visibly approaches the server's target")
-check(model.Body.CFrame.Position.Y > target.Y + 0.5, "Pounce has a short raised arc")
+check((body.CFrame.Position - root.CFrame.Position).Magnitude < 0.001, "Visual converges to the authoritative actor position")
+local rootFrame = root.CFrame
+local function action(state, duration)
+	actor:SetAttribute("State", state)
+	actor:SetAttribute("ActionStartedAt", now)
+	actor:SetAttribute("ActionDuration", duration)
+	actor:SetAttribute("AttackTarget", roblox.Vector3.new(8, 5.35, -7))
+end
+local jaw = assert(visual:FindFirstChild("Jaw"))
+local restingJaw = body.CFrame:ToObjectSpace(jaw.CFrame)
+action("Attack", 0.6)
 step(9, 1 / 60)
-local impactPosition = model.Body.CFrame.Position
-local impactDistance = ((impactPosition - strikeTarget) * Roblox.Vector3.new(1, 0, 1)).Magnitude
-check(math.abs(impactDistance - 2.2) < 0.02, "Pet stops with its muzzle near the target instead of passing through it")
-check(root.CFrame == playerFrame and root.Position == Roblox.Vector3.new(10, 6.5, 35), "Attack animation never moves the player")
-assertCosmetic(model)
-step(15, 1 / 60)
-check((model.Body.CFrame.Position - target).Magnitude < 0.03, "Pet returns to following after the short attack clip")
-local beforeInvalid = model.Body.CFrame.Position
-strike(Roblox.Vector3.new(10000, 7, 26))
-strike(Roblox.Vector3.new(0 / 0, 7, 26))
-step(1, 1 / 60)
-check((model.Body.CFrame.Position - beforeInvalid).Magnitude < 0.03, "Invalid or distant animation targets are ignored")
-
-strike(strikeTarget)
-step(6, 1 / 60)
-
-petId = "emberfox"
-equipped:Fire()
-step(1, 1 / 60)
-check(model:GetAttribute("CompanionId") == "emberfox", "Equipping fox updates the visual id")
-check(model.Body.Color ~= wolfColor and model.Ear.Size.Y > wolfEarHeight, "Fox changes color and has taller ears")
-check(model:FindFirstChild("FoxTailTip") ~= nil and model.Tail.Size.Z > 1.22, "Fox has a longer tail and pale tip")
-assertCosmetic(model)
-step(60, 1 / 60)
-check((model.Body.CFrame.Position - target).Magnitude < 0.03, "Changing companion cancels an in-flight pounce")
-
-petId = "tidecub"
-equipped:Fire()
+check(body.CFrame:ToObjectSpace(jaw.CFrame) ~= restingJaw, "Automatic basic attack opens and articulates the pet jaw without a remote callback")
+local windupJaw = body.CFrame:ToObjectSpace(jaw.CFrame)
+step(14, 1 / 60)
+check(body.CFrame.Position.Y > root.CFrame.Position.Y + 0.1 and body.CFrame.Position.Z < root.CFrame.Position.Z - 0.3, "Basic attack shows a short bite lunge")
+check(body.CFrame:ToObjectSpace(jaw.CFrame) ~= windupJaw, "Bite recovers from its drawn-back anticipation pose")
+check(root.CFrame == rootFrame and actor:GetAttribute("Health") == 60, "Animation never writes authoritative position or HP")
+for _, item in visual:GetChildren() do
+	if item.Name == "SkillSpark" then check(item.Transparency == 1, "Normal attack does not display the skill burst") end
+end
+step(20, 1 / 60)
+check((body.CFrame.Position - root.CFrame.Position).Magnitude < 0.001, "An elapsed basic action returns to its actor even if state replication is late")
+action("Attack", 0.6)
+step(9, 1 / 60)
+check(body.CFrame:ToObjectSpace(jaw.CFrame) ~= restingJaw, "Repeated Attack state uses each new server timestamp rather than requiring a state-name change")
+action("Skill", 0.8)
 step(30, 1 / 60)
-check(model:GetAttribute("CompanionId") == "tidecub", "Equipping cub updates the visual id")
-check(model.Ear:IsA("Part") and model.Ear.Shape == Roblox.Enum.PartType.Ball, "Cub has round ears")
-check(model.Body.Size.Z < wolfLength and model:FindFirstChild("FoxTailTip") == nil, "Cub is shorter and discards the fox-only geometry")
-assertCosmetic(model)
+check(body.CFrame.Position.Y > root.CFrame.Position.Y + 0.7 and body.CFrame.Position.Z < root.CFrame.Position.Z - 0.9, "Automatic skill has a larger rising pounce than a basic bite")
+local visibleSparks = 0
+for _, item in visual:GetChildren() do
+	if item.Name == "SkillSpark" and item.Transparency < 0.8 then visibleSparks += 1 end
+end
+check(visibleSparks == 6, "Automatic skill produces a six-part expressive burst from replicated action state")
+local duringSkill = body.CFrame
+strike(roblox.Vector3.new(-20, 100, -20))
+check(body.CFrame == duringSkill and root.CFrame == rootFrame, "Legacy manual callback cannot replace or double-trigger the authoritative action")
 
-petId = "unknown-companion"
-equipped:Fire()
+-- Switching skin preserves the existing actor's death and health history.
+action("Dead", 0.45)
+actor:SetAttribute("Health", 0)
+step(12, 1 / 60)
+check(body.Transparency > 0.3 and body.Transparency < 0.6 and not billboard.Enabled, "Pet death collapses and fades its visual and hides HP")
+step(20, 1 / 60)
+check(body.Transparency == 1, "Dead pet finishes disappearing")
+step(900, 1 / 60)
+check(body.Transparency == 1 and actor:GetAttribute("Health") == 0, "Elapsed local time never respawns a pet; only server state can revive it")
+actor:SetAttribute("PetId", "emberfox")
 step(1, 1 / 60)
-check(model:GetAttribute("CompanionId") == "mosswolf", "Unknown local selection falls back to the starter companion")
-
-strike(strikeTarget)
-step(6, 1 / 60)
-removed:Fire(character)
-check(model.Parent == nil, "Companion hides while the character is removed")
-step(3, 1 / 60)
-local newCharacter, newRoot = characterAt(Roblox.Vector3.new(60, 6.5, -30))
-player.Character = newCharacter
-added:Fire(newCharacter)
-step(10, 1 / 60)
-check(model.Parent == scene, "Companion returns after respawn")
-check((model.Body.CFrame.Position - Roblox.Vector3.new(63.2, 5.1, -26.4)).Magnitude < 0.03, "Respawn resets the follower near the new character")
-check(lastRaycastParameters.FilterDescendantsInstances[2] == newCharacter, "Respawn refreshes the ground filter")
-
-newRoot.CFrame = Roblox.CFrame.new(-50, 6.5, -40)
-newRoot.Position = Roblox.Vector3.new(-50, 6.5, -40)
+body, billboard = visual.Body, visual.PetHealth
+check(visual:GetAttribute("PetId") == "emberfox" and visual:FindFirstChild("FoxTailTip") ~= nil, "Server pet type change updates the fox silhouette")
+check(body.Transparency == 1 and not billboard.Enabled, "Changing equipped pet does not locally bypass its dead state")
+action("Follow", 0)
 step(1, 1 / 60)
-check((model.Body.CFrame.Position - Roblox.Vector3.new(-46.8, 5.1, -36.4)).Magnitude < 0.03, "Large teleports reset without a long catch-up path")
+check(body.Transparency == 1, "Follow arriving before positive HP cannot show a resurrected pet")
+actor:SetAttribute("Health", 60)
+step(1, 1 / 60)
+check(body.Transparency == 0 and billboard.Enabled and billboard.HealthLabel.Text == "Ember Fox  60 / 60", "Positive HP and an alive state restore the pet after server revival")
+actor:SetAttribute("PetId", "tidecub")
+step(1, 1 / 60)
+body, billboard = visual.Body, visual.PetHealth
+check(visual.Ear:IsA("Part") and visual.Ear.Shape == roblox.Enum.PartType.Ball and not visual:FindFirstChild("FoxTailTip"), "Cub uses round ears and discards fox-only parts")
+check(math.abs(body.Size.Z - 1.6) < 0.001 and billboard.HealthLabel.Text == "Tide Cub  60 / 60", "Cub retains its distinct shorter model and HP label")
+actor:SetAttribute("PetId", "unrecognized")
+step(1, 1 / 60)
+check(visual.Parent == nil, "An unknown replicated species hides rather than inventing a living fallback")
+actor:SetAttribute("PetId", "tidecub")
+step(1, 1 / 60)
+check(visual.Parent == container, "Recognized pet attributes can stream back safely")
 
-strike(Roblox.Vector3.new(-45, 7, -45))
+root.Parent = nil
+step(1, 1 / 60)
+check(visual.Parent == nil, "A streamed-out server root hides its visual")
+root.Parent = actor
+moveTo(root, roblox.CFrame.new(80, 5.35, -50))
+step(1, 1 / 60)
+check(visual.Parent == container and (body.CFrame.Position - root.CFrame.Position).Magnitude < 0.001, "Returning root snaps to its server location instead of flying across the map")
+
+local other = roblox.Instance.new("Model")
+other.Name, other.Parent = "Companion_8", folder
+other:SetAttribute("OwnerUserId", 8)
+other:SetAttribute("PetId", "mosswolf")
+other:SetAttribute("Health", 42)
+other:SetAttribute("MaxHealth", 60)
+other:SetAttribute("State", "Follow")
+local otherRoot = roblox.Instance.new("Part")
+otherRoot.Name, otherRoot.Parent = "Root", other
+moveTo(otherRoot, roblox.CFrame.new(-20, 5.35, 0))
+other.PrimaryPart = otherRoot
+folder.ChildAdded:Fire(other)
+step(1, 1 / 60)
+local otherVisual = assert(container:FindFirstChild(other.Name))
+check(#container:GetChildren() == 2 and otherVisual.PetHealth.MaxDistance == 55, "Other players' server pets appear with their own independent HP billboards")
+check(otherVisual.PetHealth.HealthLabel.Text == "Moss Wolf  42 / 60", "Remote player's pet reads its own HP")
+local oldOtherFrame = otherVisual.Body.CFrame
+folder.ChildRemoved:Fire(actor)
+actor.Parent = nil
+check(#container:GetChildren() == 1 and otherVisual.Body.CFrame == oldOtherFrame, "Removing one pet cleans only its own visual")
+actor.Parent = folder
+folder.ChildAdded:Fire(actor)
+step(1, 1 / 60)
+visual = assert(container:FindFirstChild(actor.Name))
+check(#container:GetChildren() == 2 and visual.Body.Transparency == 0, "A model reintroduced through streaming gets a fresh visual")
+folder.Name = "RetiredCompanions"
+event(folder, "Name"):Fire()
+check(#container:GetChildren() == 0 and actor.Parent == folder and root.CFrame.Position.X == 80, "Folder rename cleans only local geometry and leaves server actors intact")
+folder.Name = "WildbondCompanions"
+event(folder, "Name"):Fire()
+step(1, 1 / 60)
+check(#container:GetChildren() == 2, "Matching folder can reattach after a rename")
+folder.Parent = nil
+scene.ChildRemoved:Fire(folder)
+check(#container:GetChildren() == 0, "Removing the streamed folder detaches every local pet")
+folder.Parent = scene
+scene.ChildAdded:Fire(folder)
+step(1, 1 / 60)
+check(#container:GetChildren() == 2, "A streamed folder can return safely")
 cleanup()
 cleanup()
-check(#scene:GetChildren() == 0, "Repeated cleanup leaves no companion instances")
-check(render.Active() == 0 and added.Active() == 0 and removed.Active() == 0 and equipped.Active() == 0, "Cleanup disconnects every event subscription")
+check(scene:FindFirstChild("LocalCompanionVisuals") == nil and folder.Parent == scene and actor.Parent == folder, "Idempotent cleanup removes only the cosmetic container")
+check(render:Count() == 0 and scene.ChildAdded:Count() == 0 and scene.ChildRemoved:Count() == 0, "Cleanup disconnects render and workspace subscriptions")
+check(folder.ChildAdded:Count() == 0 and folder.ChildRemoved:Count() == 0 and event(folder, "Name"):Count() == 0, "Cleanup disconnects folder subscriptions")
 render:Fire(1 / 60)
-equipped:Fire()
-added:Fire(newCharacter)
-strike(strikeTarget)
-check(#scene:GetChildren() == 0, "Events cannot revive a stopped view")
+folder.ChildAdded:Fire(other)
+strike(roblox.Vector3.zero)
+check(scene:FindFirstChild("LocalCompanionVisuals") == nil, "Late events and old callbacks cannot revive a stopped view")
 
--- Equal elapsed time at common display refresh rates gives the same follow lag.
 local function movementAtRate(fps)
+	moveTo(root, roblox.CFrame.new(0, 5.35, 0))
 	local stop = CompanionView.start(player)
 	step(1, 1 / fps)
-	local pet = assert(scene:FindFirstChild("LocalTrailCompanion"))
-	newRoot.CFrame = Roblox.CFrame.new(-40, 6.5, -40)
-	newRoot.Position = Roblox.Vector3.new(-40, 6.5, -40)
+	moveTo(root, roblox.CFrame.new(8, 5.35, 0))
 	step(fps / 2, 1 / fps)
-	local position = pet.Body.CFrame.Position
+	local position = scene.LocalCompanionVisuals[actor.Name].Body.CFrame.Position
 	stop()
-	newRoot.CFrame = Roblox.CFrame.new(-50, 6.5, -40)
-	newRoot.Position = Roblox.Vector3.new(-50, 6.5, -40)
 	return position
 end
-check((movementAtRate(30) - movementAtRate(120)).Magnitude < 0.02, "Follower translation is stable across display frame rates")
-check(#scene:GetChildren() == 0 and render.Active() == 0, "Frame rate scenarios also clean up")
-
-print("CompanionView: " .. checks .. " checks passed (reflected Roblox instances; mocked signals/player/ground, no Studio physics or rendering)")
+check((movementAtRate(30) - movementAtRate(120)).Magnitude < 0.01, "Server translation smoothing is stable across common display refresh rates")
+check(render:Count() == 0 and scene:FindFirstChild("LocalCompanionVisuals") == nil, "Frame-rate cases leave no visuals or event subscriptions")
+print("CompanionView: " .. checks .. " checks passed (reflected instances; mocked streaming/clock, no Studio rendering)")

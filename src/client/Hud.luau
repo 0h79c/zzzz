@@ -51,10 +51,10 @@ end
 
 function Hud.start(command, catalog, rules, dodgeRules)
 	rules = rules or { meleeCooldown = 0.6, petCooldown = 3.2 }
-	dodgeRules = dodgeRules or { cooldown = 4, doubleTapWindow = 0.28 }
+	dodgeRules = dodgeRules or { cooldown = 4 }
 	local player = Players.LocalPlayer
 	local destroyed = false
-	local currentState, stateClock, refreshTiming, refreshCooldowns
+	local currentState, stateClock, refreshTiming, refreshCooldowns, refreshPet
 	local screen = make("ScreenGui", { Name = "WildbondHUD", ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling }, player:WaitForChild("PlayerGui"))
 	local gui = make("Frame", { Name = "Canvas", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1) }, screen)
 	local scale = make("UIScale", { Scale = 1 }, gui)
@@ -84,6 +84,7 @@ function Hud.start(command, catalog, rules, dodgeRules)
 	local resizeClock = 0
 	local resizeConnection = RunService.RenderStepped:Connect(function(dt)
 		if refreshCooldowns then refreshCooldowns() end
+		if refreshPet then refreshPet() end
 		resizeClock += dt
 		if resizeClock >= 1 then
 			resizeClock = 0
@@ -97,7 +98,7 @@ function Hud.start(command, catalog, rules, dodgeRules)
 		BackgroundColor3 = ink, BackgroundTransparency = 0.08, BorderSizePixel = 0,
 	}, gui)
 	round(mission, 16)
-	label(mission, "WILDBOND", UDim2.fromOffset(18, 12), UDim2.fromOffset(280, 26), 23, mint)
+	label(mission, "WILDBOND  v0.4.0", UDim2.fromOffset(18, 12), UDim2.fromOffset(280, 26), 23, mint)
 	label(mission, "GREYWATER REACH  /  PVE ALPHA", UDim2.fromOffset(18, 42), UDim2.fromOffset(280, 18), 10)
 	local objective = label(mission, "Find the hunt board in the village.", UDim2.fromOffset(18, 70), UDim2.fromOffset(284, 42), 16)
 	local rows = {}
@@ -123,10 +124,37 @@ function Hud.start(command, catalog, rules, dodgeRules)
 		end
 	end
 
-	local purse = make("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -18, 0, 18), Size = UDim2.fromOffset(156, 78), BackgroundColor3 = ink, BorderSizePixel = 0 }, gui)
+	local purse = make("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -18, 0, 18), Size = UDim2.fromOffset(216, 98), BackgroundColor3 = ink, BorderSizePixel = 0 }, gui)
 	round(purse, 14)
-	local shells = label(purse, "0 shells", UDim2.fromOffset(14, 9), UDim2.fromOffset(132, 27), 22, amber)
-	local hunts = label(purse, "0 hunts completed", UDim2.fromOffset(14, 41), UDim2.fromOffset(132, 18), 11)
+	local shells = label(purse, "0 shells", UDim2.fromOffset(14, 9), UDim2.fromOffset(188, 27), 22, amber)
+	local hunts = label(purse, "0 hunts completed", UDim2.fromOffset(14, 41), UDim2.fromOffset(188, 18), 11)
+	local progression = label(purse, "LV 1 · 0 coins · 0 XP", UDim2.fromOffset(14, 67), UDim2.fromOffset(188, 20), 11, mint)
+	local petStatus = make("Frame", { Name = "CompanionStatus", AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -18, 0, 124), Size = UDim2.fromOffset(216, 72), BackgroundColor3 = ink, BorderSizePixel = 0 }, gui)
+	round(petStatus, 12)
+	local petHealth = label(petStatus, "Companion arriving…", UDim2.fromOffset(12, 7), UDim2.fromOffset(192, 18), 12, mint)
+	petHealth.Name = "PetHealth"
+	local petStats = label(petStatus, "", UDim2.fromOffset(12, 27), UDim2.fromOffset(192, 16), 10)
+	petStats.Name = "PetStats"
+	local petMode = label(petStatus, "Auto attack · auto skill", UDim2.fromOffset(12, 47), UDim2.fromOffset(192, 16), 10, amber)
+	petMode.Name = "PetMode"
+	refreshPet = function()
+		local hp, maximum = player:GetAttribute("PetHealth"), player:GetAttribute("PetMaxHealth")
+		local state = player:GetAttribute("PetState")
+		if typeof(hp) ~= "number" or typeof(maximum) ~= "number" then return end
+		petHealth.Text = string.format("Companion %d / %d HP", math.max(0, math.floor(hp)), math.max(1, math.floor(maximum)))
+		petStats.Text = string.format("ATK %d · skill %d · DEF %d", player:GetAttribute("PetAttackDamage") or 0, player:GetAttribute("PetSkillDamage") or 0, player:GetAttribute("PetDefense") or 0)
+		if state == "Dead" then
+			local respawnAt = player:GetAttribute("PetRespawnAt")
+			local remaining = typeof(respawnAt) == "number" and respawnAt > 0 and math.max(0, respawnAt - workspace:GetServerTimeNow()) or nil
+			petMode.Text = if remaining then string.format("Reviving in %.1fs", remaining) else "Leave combat to revive companion"
+			petHealth.TextColor3 = amber
+		else
+			petHealth.TextColor3 = mint
+			local readyAt = player:GetAttribute("PetSkillReadyAt") or 0
+			local remaining = math.max(0, readyAt - workspace:GetServerTimeNow())
+			petMode.Text = if remaining > 0 then string.format("Auto skill %.1fs · %s", remaining, if player:GetAttribute("InCombat") then "in combat" else "following") else "Auto attack · auto skill ready"
+		end
+	end
 
 	local health = make("Frame", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -23), Size = UDim2.fromOffset(220, 14), BackgroundColor3 = ink, BorderSizePixel = 0 }, gui)
 	round(health, 7)
@@ -171,10 +199,10 @@ function Hud.start(command, catalog, rules, dodgeRules)
 		end)
 	end
 
-	local petPanel = make("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -18, 0, 160), Size = UDim2.fromOffset(320, 213), BackgroundColor3 = ink, BorderSizePixel = 0, Visible = false }, gui)
+	local petPanel = make("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -18, 0, 252), Size = UDim2.fromOffset(320, 213), BackgroundColor3 = ink, BorderSizePixel = 0, Visible = false }, gui)
 	round(petPanel, 14)
 	label(petPanel, "YOUR COMPANIONS", UDim2.fromOffset(16, 10), UDim2.fromOffset(240, 22), 15, mint)
-	label(petPanel, "Earn shells from hunts · equal combat strength.", UDim2.fromOffset(16, 36), UDim2.fromOffset(288, 20), 11)
+	label(petPanel, "Hunts earn shells · each pet has its own stats.", UDim2.fromOffset(16, 36), UDim2.fromOffset(288, 20), 11)
 	local petButtons = {}
 	for index, pet in catalog do
 		label(petPanel, pet.name, UDim2.fromOffset(16, 66 + (index - 1) * 45), UDim2.fromOffset(160, 34), 14)
@@ -184,7 +212,7 @@ function Hud.start(command, catalog, rules, dodgeRules)
 			command:FireServer(action, pet.id)
 		end)
 	end
-	companionToggle = button(gui, "Companions", UDim2.new(1, -174, 0, 105), UDim2.fromOffset(156, 42), function()
+	companionToggle = button(gui, "Companions", UDim2.new(1, -174, 0, 204), UDim2.fromOffset(156, 42), function()
 		petPanel.Visible = not petPanel.Visible
 	end)
 
@@ -204,7 +232,7 @@ function Hud.start(command, catalog, rules, dodgeRules)
 	local function bond()
 		if focused() then return end
 		local now = os.clock()
-		if now < bondReadyAt or now - lastBondRequest < 0.2 then return end
+		if player:GetAttribute("PetState") == "Dead" or now < bondReadyAt or workspace:GetServerTimeNow() < (player:GetAttribute("PetSkillReadyAt") or 0) or now - lastBondRequest < 0.2 then return end
 		lastBondRequest = now
 		command:FireServer("bond")
 	end
@@ -223,7 +251,7 @@ function Hud.start(command, catalog, rules, dodgeRules)
 		command:FireServer("dodge", direction.Unit)
 	end
 	attackButton = button(gui, "STRIKE", UDim2.new(1, -134, 1, if UserInputService.TouchEnabled then -194 else -96), UDim2.fromOffset(116, 66), attack)
-	bondButton = button(gui, "BOND", UDim2.new(1, -260, 1, if UserInputService.TouchEnabled then -194 else -96), UDim2.fromOffset(116, 66), bond)
+	bondButton = button(gui, "PET SKILL", UDim2.new(1, -260, 1, if UserInputService.TouchEnabled then -194 else -96), UDim2.fromOffset(116, 66), bond)
 	dodgeButton = button(gui, "DODGE", UDim2.new(1, -134, 1, if UserInputService.TouchEnabled then -276 else -174), UDim2.fromOffset(116, 58), dodge)
 	-- Slot 1 is a temporary companion command while class skills are being built.
 	-- Empty slots deliberately have no click or key actions.
@@ -237,27 +265,25 @@ function Hud.start(command, catalog, rules, dodgeRules)
 		}, hotbar)
 		round(slot, 10)
 		label(slot, tostring(index), UDim2.fromOffset(6, 3), UDim2.fromOffset(18, 16), 11, if index == 1 then mint else Color3.fromRGB(160, 170, 171))
-		slots[index] = label(slot, if index == 1 then "Bond" else "Unlearned", UDim2.fromOffset(3, 22), UDim2.fromOffset(56, 30), if index == 1 then 13 else 9, if index == 1 then cream else Color3.fromRGB(160, 170, 171))
+		slots[index] = label(slot, if index == 1 then "Pet skill" else "Unlearned", UDim2.fromOffset(3, 22), UDim2.fromOffset(56, 30), if index == 1 then 13 else 9, if index == 1 then cream else Color3.fromRGB(160, 170, 171))
 		if index == 1 then slot.Activated:Connect(bond) end
 	end
 	refreshCooldowns = function()
 		local now = os.clock()
-		for _, entry in { { attackButton, attackReadyAt, "STRIKE" }, { bondButton, bondReadyAt, "BOND" }, { dodgeButton, dodgeReadyAt, "DODGE" } } do
+		for _, entry in { { attackButton, attackReadyAt, "STRIKE" }, { bondButton, bondReadyAt, "PET SKILL" }, { dodgeButton, dodgeReadyAt, "DODGE" } } do
 			local remaining = math.max(0, entry[2] - now)
+			if entry[1] == bondButton then remaining = math.max(remaining, (player:GetAttribute("PetSkillReadyAt") or 0) - workspace:GetServerTimeNow()) end
 			entry[1].Text = if remaining > 0 then string.format("%s %.1f", entry[3], remaining) else entry[3]
 			entry[1].BackgroundColor3 = if remaining > 0 then amber else mint
 		end
-		local remaining = math.max(0, bondReadyAt - now)
-		slots[1].Text = if remaining > 0 then string.format("Bond\n%.1f", remaining) else "Bond"
+		local remaining = math.max(0, bondReadyAt - now, (player:GetAttribute("PetSkillReadyAt") or 0) - workspace:GetServerTimeNow())
+		slots[1].Text = if remaining > 0 then string.format("Pet skill\n%.1f", remaining) else "Pet skill"
 	end
 	resize()
-	local controlsHint = label(gui, "Click / R2 strike · 1 / L2 companion · double Space / B dodge", UDim2.new(0.5, -245, 1, -166), UDim2.fromOffset(490, 20), 10)
+	local controlsHint = label(gui, "Click / R2 strike · 1 / L2 pet skill · Shift / B dodge", UDim2.new(0.5, -245, 1, -166), UDim2.fromOffset(490, 20), 10)
 	controlsHint.TextXAlignment = Enum.TextXAlignment.Center
 	controlsHint.Visible = not UserInputService.TouchEnabled
-	local lastSpace = -math.huge
 	local inputConnection = UserInputService.InputBegan:Connect(function(input, processed)
-		-- ContextActionService alone owns Space history. Roblox's normal jump
-		-- can mark the first tap processed after our action returned Pass.
 		if processed or focused() then return end
 		if input.KeyCode == Enum.KeyCode.ButtonR2 or input.UserInputType == Enum.UserInputType.MouseButton1 then
 			attack()
@@ -269,23 +295,14 @@ function Hud.start(command, catalog, rules, dodgeRules)
 			petPanel.Visible = not petPanel.Visible
 		end
 	end)
-	local spaceAction = "WildbondDoubleSpaceDodge"
-	ContextActionService:BindActionAtPriority(spaceAction, function(_, state)
-		if focused() then
-			lastSpace = -math.huge
-			return Enum.ContextActionResult.Pass
-		end
-		if state ~= Enum.UserInputState.Begin then return Enum.ContextActionResult.Pass end
-		local now = os.clock()
-		if now - lastSpace <= (dodgeRules.doubleTapWindow or 0.28) then
-			lastSpace = -math.huge
-			dodge()
-			-- The first tap remains Roblox's normal jump; the second is the dodge.
-			return Enum.ContextActionResult.Sink
-		end
-		lastSpace = now
-		return Enum.ContextActionResult.Pass
-	end, false, Enum.ContextActionPriority.High.Value + 10, Enum.KeyCode.Space)
+	local dodgeAction = "WildbondShiftDodge"
+	ContextActionService:BindActionAtPriority(dodgeAction, function(_, state)
+		if focused() then return Enum.ContextActionResult.Pass end
+		if state == Enum.UserInputState.Begin then dodge() end
+		-- Consume Shift start/end so it cannot toggle Roblox mouse lock.
+		-- Space remains completely unbound and keeps ordinary jumping.
+		return Enum.ContextActionResult.Sink
+	end, false, Enum.ContextActionPriority.High.Value + 10, Enum.KeyCode.LeftShift, Enum.KeyCode.RightShift)
 
 	local waypoint = make("Part", { Name = "LocalHuntWaypoint", Size = Vector3.new(1.2, 8, 1.2), Anchored = true, CanCollide = false, CanTouch = false, CanQuery = false, Material = Enum.Material.Neon, Color = mint, Transparency = 0.65 }, workspace)
 	local waypointBillboard = make("BillboardGui", { Size = UDim2.fromOffset(210, 50), StudsOffset = Vector3.new(0, 5, 0), AlwaysOnTop = true, MaxDistance = 400 }, waypoint)
@@ -297,8 +314,8 @@ function Hud.start(command, catalog, rules, dodgeRules)
 	welcome.ZIndex = 10
 	round(welcome, 18)
 	label(welcome, "A woodland trail. A wild bond.", UDim2.fromOffset(26, 23), UDim2.fromOffset(408, 54), 26, mint)
-	label(welcome, "Take a hunt at the village board. Click / R2 to strike. Double-tap Space or press B / DODGE to evade. Slot 1 / L2 temporarily commands your companion.\n\nSlots 2–8 await learned class skills. Collect each crystal, then return to camp for 60 shells.", UDim2.fromOffset(26, 87), UDim2.fromOffset(408, 127), 15)
-	label(welcome, "Early prototype · progress resets when you leave.\nCompanions share combat strength. No purchases enabled.", UDim2.fromOffset(26, 219), UDim2.fromOffset(408, 37), 11, amber)
+	label(welcome, "Take a hunt at the village board. Click / R2 strikes; Shift / B dodges; Space jumps.\n\nPets fight and use skills on their own. 1 / L2 requests a pet skill. Collect three crystals, then return for 60 shells. Slots 2–8 await class skills.", UDim2.fromOffset(26, 87), UDim2.fromOffset(408, 127), 15)
+	label(welcome, "Early prototype · progress resets when you leave.\nCompanions revive after 10s out of combat. No purchases enabled.", UDim2.fromOffset(26, 219), UDim2.fromOffset(408, 37), 11, amber)
 	button(welcome, "Explore Greywater Reach", UDim2.fromOffset(26, 266), UDim2.fromOffset(408, 34), function()
 		welcome:Destroy()
 	end)
@@ -329,6 +346,10 @@ function Hud.start(command, catalog, rules, dodgeRules)
 		refreshTiming()
 		shells.Text = tostring(state.shells) .. " shells"
 		hunts.Text = tostring(state.huntsCompleted) .. " hunts completed"
+		local progress = state.progression
+		if progress then
+			progression.Text = string.format("LV %d · %d coins · %d/%d XP", progress.level, progress.coins, progress.xp, progress.nextLevelXp or 0)
+		end
 		local collected = 0
 		local nextTarget
 		for _, target in targetInfo do
@@ -368,7 +389,7 @@ function Hud.start(command, catalog, rules, dodgeRules)
 		toastVersion += 1
 		resizeConnection:Disconnect()
 		inputConnection:Disconnect()
-		ContextActionService:UnbindAction(spaceAction)
+		ContextActionService:UnbindAction(dodgeAction)
 		characterConnection:Disconnect()
 		if healthConnection then healthConnection:Disconnect() end
 		waypoint:Destroy()

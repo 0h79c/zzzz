@@ -14,17 +14,17 @@ Phải có animation cho đi/chạy, đánh thường, chuẩn bị skill, bị 
 | --- | --- | --- |
 | Click chuột | Đánh thường bằng vũ khí đang dùng | Làm trước; server kiểm tra mục tiêu, cự ly, đường nhìn và hồi đòn |
 | 1–8 | Tám ô skill; sau này kéo skill đã học vào từng ô | Làm nền điều khiển trước; ô chưa có skill phải thể hiện trống, không giả tám skill đã tồn tại |
-| Space hai lần liên tiếp | Né theo hướng di chuyển; không có hướng thì dùng hướng nhân vật | Bắt đầu bằng cooldown 4 giây; thể lực, cửa sổ bất tử và các tương tác khác phải thử riêng trước khi thêm |
+| Shift trái hoặc phải | Né theo hướng di chuyển; không có hướng thì dùng hướng nhân vật | Cooldown ban đầu 4 giây; thể lực và tương tác theo class làm sau |
 | E / prompt | Nói chuyện, nhận nhiệm vụ, nhặt và tương tác | Giữ điều khiển tương tác |
-| Điều khiển cảm ứng / tay cầm | Có hành động tương đương cho đánh, skill và né | Không yêu cầu người dùng mobile giả lập nhấn Space hai lần |
+| Điều khiển cảm ứng / tay cầm | Có hành động tương đương cho đánh, skill và né | Nút DODGE trên cảm ứng, B trên tay cầm |
 
-Space lần đầu vẫn cần cho nhảy. Đòn thường, né và skill không được bỏ qua hồi chiêu khi đổi thú, chết/hồi sinh hoặc spam remote. Về sau skill dùng mana hoặc nộ tùy class; chưa ghép mọi class vào một thanh tài nguyên chỉ để tiện viết mã.
+Space chỉ dùng nhảy; Shift thay yêu cầu double-Space cũ theo phản hồi mới. Đòn thường, né và skill không được bỏ qua hồi chiêu khi đổi thú, chết/hồi sinh hoặc spam remote. Về sau skill dùng mana hoặc nộ tùy class; chưa ghép mọi class vào một thanh tài nguyên chỉ để tiện viết mã.
 
 ## Một vùng đất có bản sắc
 
 Map khởi đầu là **một vùng đất liền liên tục**, có trại/làng, đường rừng, suối, vách đá và phế tích trong cùng cảnh quan. Lối đi, độ cao và vật chắn tạo lựa chọn khi đánh. Tránh bố cục đảo nhiệt đới tách mảnh, quảng trường phẳng nhiều màu và nhịp tiến từ đảo này sang đảo khác làm người chơi liên tưởng tới Blox Fruits. Dùng ảnh tham khảo để học hình khối, ánh sáng và độ rõ; tự thiết kế model và địa danh.
 
-Vùng đầu cần rộng hơn bản thử ba trận: mục tiêu cho đợt map đầu là 8–12 điểm quái thuộc 3–4 loại, có khoảng nghỉ giữa các cụm. Đây là quy mô thử, điều chỉnh theo đi lại và hiệu năng thực. NPC, dụng cụ nghề, cây cỏ và dấu vết sinh vật giải thích nơi này đang sống; không rải đồ trang trí dày để che địa hình thiếu ý tưởng.
+Theo yêu cầu mới, mở rộng diện tích có thể đi khoảng 5–10 lần bản 220×260; mốc này chọn 550×624, đúng 6 lần diện tích, cùng 25 điểm quái thuộc bốn loại. Giữ đường săn đầu gần làng, thêm các tuyến khám phá riêng để map lớn không bắt nhiệm vụ đầu kéo dài. Điều chỉnh mật độ theo đi lại và hiệu năng thực. NPC, dụng cụ nghề, cây cỏ và dấu vết sinh vật giải thích nơi này đang sống; không rải đồ trang trí dày để che địa hình thiếu ý tưởng.
 
 Đặt bến xe ngựa hoặc cổng dẫn sang vùng khác nhưng đóng chức năng cho tới khi vùng đầu chơi tốt. Vùng sau khó hơn, có quái/cơ chế và tài nguyên mới; cần lý do đi tới và đường quay lại, không chỉ thay màu đất rồi tăng máu. Chưa làm cả thế giới trong một đợt.
 
@@ -72,6 +72,8 @@ Ngẫu nhiên sức mạnh là phần thưởng gameplay, không nối với gac
 ## Thú có vai trò thật
 
 Thú của người chơi phải tiến đến mục tiêu và đánh thường tự động khi chủ tham chiến. Đòn thường cần animation, giới hạn khoảng cách, đường nhìn và quyết định server; không để follower phía client tự gây damage. Cần lệnh trở về khi chủ chạy xa, chết hoặc đổi thú.
+
+Thú có máu và chỉ số riêng; quái có thể đánh thú bằng đòn thường và skill. Khi thú bị hạ, chỉ hồi sinh sau khi chủ rời combat liên tục 10 giây. Quay lại combat hủy đếm ngược; đổi thú hoặc nhân vật hồi sinh không được bỏ qua điều kiện này. Skill thú tự sử dụng khi có mục tiêu hợp lệ; lệnh thủ công nếu còn giữ phải dùng chung hồi chiêu. Hiểu câu “ko chết hồi sinh” trong phản hồi là thú có thể chết và hồi sinh theo điều kiện trên.
 
 Các phần phát triển sau: tiến hóa; nội tại buff nhân vật; skill gây sát thương, buff, gây choáng hoặc thu hút aggro. Làm từng vai trò trên một thú trước khi nhân ra cả bộ sưu tập. Khi có healer/taunt, hệ đóng góp cần nhận cả hỗ trợ hợp lệ, không chỉ người gây sát thương.
 

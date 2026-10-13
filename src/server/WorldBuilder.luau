@@ -20,6 +20,9 @@ function WorldBuilder.build(): World
 	local world = Instance.new("Model")
 	world.Name = "FirstTrailIsland"
 	world.Parent = workspace
+	-- Area grows by six, not distance by six. The first hunt stays in the core;
+	-- the outer routes are additional hunting ground rather than a longer tutorial.
+	local meadowWidth, meadowDepth = 550, 624
 	local partCount = 0
 	local prompts: { [string]: ProximityPrompt } = {}
 	local palette = {
@@ -96,17 +99,25 @@ function WorldBuilder.build(): World
 		return (point - (a + line * along)).Magnitude
 	end
 
+	local sceneryRoutes: { { a: Vector3, b: Vector3, width: number } } = {}
+	local regionLandmarks = {
+		{ id = "westwood", title = "WESTWOOD HOLLOW", x = -154, z = 21, color = Color3.fromRGB(107, 145, 104) },
+		{ id = "reedfen", title = "REEDFEN", x = -29, z = -294, color = Color3.fromRGB(143, 173, 141) },
+		{ id = "oldwatch", title = "OLDWATCH RIDGE", x = 218, z = -191, color = Color3.fromRGB(137, 150, 143) },
+		{ id = "sunmeadow", title = "SUNMEADOW", x = 85, z = 242, color = Color3.fromRGB(152, 177, 107) },
+	}
 	local function path(a: Vector3, b: Vector3, width: number, name: string?)
 		local delta = b - a
 		local middle = (a + b) / 2
 		part(name or "Trail", Vector3.new(width, 0.12, delta.Magnitude + 1), CFrame.lookAt(middle, b), palette.path, Enum.Material.Sand)
+		table.insert(sceneryRoutes, { a = a, b = b, width = width })
 	end
 
 	-- Keep the encounter floor level while the surrounding land reads as a valley.
 	-- The broad landscape continues beyond the ridges; there is no ocean/island edge.
 	part("WoodlandLandscape", Vector3.new(1800, 12, 1800), CFrame.new(8, -6, -29), palette.grass, Enum.Material.Grass)
-	part("IslandEarth", Vector3.new(220, 12, 260), CFrame.new(8, -4, -29), palette.earth, Enum.Material.Rock)
-	part("IslandMeadow", Vector3.new(220, 4, 260), CFrame.new(8, 2, -29), palette.grass, Enum.Material.Grass)
+	part("IslandEarth", Vector3.new(meadowWidth, 12, meadowDepth), CFrame.new(8, -4, -29), palette.earth, Enum.Material.Rock)
+	part("IslandMeadow", Vector3.new(meadowWidth, 4, meadowDepth), CFrame.new(8, 2, -29), palette.grass, Enum.Material.Grass)
 
 	local trailPoints = {
 		Vector3.new(0, 4.07, 35),
@@ -130,6 +141,46 @@ function WorldBuilder.build(): World
 	}
 	for _, branch in sideTrails do
 		path(branch[1], branch[2], 6, "SideTrail")
+	end
+	-- A continuous outer hunting circuit connects five visually distinct areas.
+	-- Cross routes let players return to camp without walking the whole circuit.
+	local outerPoints = {
+		Vector3.new(-45, 4.07, -25), Vector3.new(-124, 4.07, -35),
+		Vector3.new(-194, 4.07, -70), Vector3.new(-216, 4.07, -143),
+		Vector3.new(-134, 4.07, -160), Vector3.new(-84, 4.07, -224),
+		Vector3.new(-12, 4.07, -253), Vector3.new(77, 4.07, -245),
+		Vector3.new(178, 4.07, -269), Vector3.new(187, 4.07, -198),
+		Vector3.new(169, 4.07, -139), Vector3.new(227, 4.07, -70),
+		Vector3.new(227, 4.07, 36), Vector3.new(188, 4.07, 132),
+		Vector3.new(85, 4.07, 199), Vector3.new(-24, 4.07, 202),
+		Vector3.new(-146, 4.07, 181), Vector3.new(-229, 4.07, 97),
+		Vector3.new(-187, 4.07, 23), Vector3.new(-124, 4.07, -35),
+	}
+	for index = 1, #outerPoints - 1 do
+		path(outerPoints[index], outerPoints[index + 1], 8, "OuterTrail")
+	end
+	local crossRoutes = {
+		{ Vector3.new(0, 4.07, -65), Vector3.new(28, 4.07, -122) },
+		{ Vector3.new(28, 4.07, -122), Vector3.new(16, 4.07, -171) },
+		{ Vector3.new(16, 4.07, -171), Vector3.new(-12, 4.07, -253) },
+		{ Vector3.new(65, 4.07, -80), Vector3.new(169, 4.07, -139) },
+		{ Vector3.new(63, 4.07, -18), Vector3.new(227, 4.07, 36) },
+		{ Vector3.new(0, 4.07, 35), Vector3.new(46, 4.07, 92) },
+		{ Vector3.new(46, 4.07, 92), Vector3.new(85, 4.07, 199) },
+		{ Vector3.new(-187, 4.07, 23), Vector3.new(-124, 4.07, 55) },
+		{ Vector3.new(-124, 4.07, 55), Vector3.new(-146, 4.07, 181) },
+	}
+	for _, branch in crossRoutes do
+		path(branch[1], branch[2], 7, "CrossTrail")
+	end
+	local landmarkRoutes = {
+		{ Vector3.new(-187, 4.07, 23), Vector3.new(-154, 4.07, 9) },
+		{ Vector3.new(-12, 4.07, -253), Vector3.new(-29, 4.07, -282) },
+		{ Vector3.new(187, 4.07, -198), Vector3.new(205, 4.07, -191) },
+		{ Vector3.new(85, 4.07, 199), Vector3.new(85, 4.07, 229) },
+	}
+	for _, branch in landmarkRoutes do
+		path(branch[1], branch[2], 6, "LandmarkTrail")
 	end
 
 	-- The tavern has an actual doorway, a warm interior, and a readable silhouette.
@@ -228,7 +279,7 @@ function WorldBuilder.build(): World
 	local approach = { Vector3.new(0, 4.07, 35), Vector3.new(-7, 4.07, 55), Vector3.new(-45, 4.07, 55) }
 	for index = 1, #approach - 1 do
 		local a, b = approach[index], approach[index + 1]
-		part("CarriageApproach", Vector3.new(5, 0.12, (b - a).Magnitude + 1), CFrame.lookAt((a + b) / 2, b), palette.path, Enum.Material.Ground)
+		path(a, b, 5, "CarriageApproach")
 	end
 	local carriageX, carriageZ = -59, 66
 	part("CarriageBed", Vector3.new(6.5, 0.55, 10), CFrame.new(carriageX, 6.15, carriageZ), palette.woodLight, Enum.Material.WoodPlanks)
@@ -288,26 +339,26 @@ function WorldBuilder.build(): World
 	-- Overlapping ridges enclose the playable region and continue into the horizon.
 	-- The low valley remains readable from camp rather than exposing an island rim.
 	for _, side in { -1, 1 } do
-		for index = 1, 9 do
-			local cliffZ = 85 - (index - 1) * 29
+		for index = 1, 18 do
+			local cliffZ = 267 - (index - 1) * 35
 			local height = 22 + index % 3 * 6
-			local cliffX = if side < 0 then -103 else 119
-			part("ValleySideRidge", Vector3.new(22, height, 32), CFrame.new(cliffX, 4 + height / 2, cliffZ), palette.stone, Enum.Material.Rock)
-			part("ValleySideGrass", Vector3.new(23, 1.2, 33), CFrame.new(cliffX, 4 + height + 0.3, cliffZ), palette.grassLight, Enum.Material.Grass)
+			local cliffX = if side < 0 then -278 else 294
+			part("ValleySideRidge", Vector3.new(22, height, 38), CFrame.new(cliffX, 4 + height / 2, cliffZ), palette.stone, Enum.Material.Rock)
+			part("ValleySideGrass", Vector3.new(23, 1.2, 39), CFrame.new(cliffX, 4 + height + 0.3, cliffZ), palette.grassLight, Enum.Material.Grass)
 		end
 	end
-	for index = 1, 8 do
-		local cliffX = -98 + (index - 1) * 30
+	for index = 1, 18 do
+		local cliffX = -257 + (index - 1) * 31
 		local height = 24 + index % 3 * 5
-		part("NorthernCliff", Vector3.new(33, height, 24), CFrame.new(cliffX, 4 + height / 2, -155), palette.stone, Enum.Material.Rock)
-		part("NorthernGrass", Vector3.new(34, 1.2, 25), CFrame.new(cliffX, 4 + height + 0.3, -155), palette.grassLight, Enum.Material.Grass)
-		part("SouthernRidge", Vector3.new(33, 18 + index % 2 * 5, 24), CFrame.new(cliffX, 13 + index % 2 * 2.5, 101), palette.stone, Enum.Material.Rock)
-		part("SouthernRidgeGrass", Vector3.new(34, 1.2, 25), CFrame.new(cliffX, 22.4 + index % 2 * 5, 101), palette.grassLight, Enum.Material.Grass)
+		part("NorthernCliff", Vector3.new(34, height, 24), CFrame.new(cliffX, 4 + height / 2, -351), palette.stone, Enum.Material.Rock)
+		part("NorthernGrass", Vector3.new(35, 1.2, 25), CFrame.new(cliffX, 4 + height + 0.3, -351), palette.grassLight, Enum.Material.Grass)
+		part("SouthernRidge", Vector3.new(34, 18 + index % 2 * 5, 24), CFrame.new(cliffX, 13 + index % 2 * 2.5, 293), palette.stone, Enum.Material.Rock)
+		part("SouthernRidgeGrass", Vector3.new(35, 1.2, 25), CFrame.new(cliffX, 22.4 + index % 2 * 5, 293), palette.grassLight, Enum.Material.Grass)
 	end
 	for layer = 1, 2 do
-		for index = 1, 7 do
+		for index = 1, 10 do
 			local height = 44 + layer * 20 + index % 3 * 14
-			local ridge = part("DistantWoodlandRidge", Vector3.new(90, height, 84), CFrame.new(-224 + index * 59, height / 2 - 2, -165 - layer * 56) * CFrame.Angles(0, math.rad(index % 2 * 20 - 10), 0), if layer == 1 then Color3.fromRGB(112, 141, 126) else Color3.fromRGB(137, 163, 152), Enum.Material.Grass)
+			local ridge = part("DistantWoodlandRidge", Vector3.new(90, height, 84), CFrame.new(-386 + index * 72, height / 2 - 2, -365 - layer * 56) * CFrame.Angles(0, math.rad(index % 2 * 20 - 10), 0), if layer == 1 then Color3.fromRGB(112, 141, 126) else Color3.fromRGB(137, 163, 152), Enum.Material.Grass)
 			ridge.CanCollide = false
 		end
 	end
@@ -369,7 +420,7 @@ function WorldBuilder.build(): World
 		if (point - Vector3.new(-24, 4.07, 38)).Magnitude < 22 or (point - Vector3.new(20, 4.07, 27)).Magnitude < 20 then
 			return false
 		end
-		if x > -74 and x < -37 and z > 40 then
+		if x > -74 and x < -37 and z > 40 and z < 90 then
 			return false
 		end
 		if distanceToSegment(point, Vector3.new(0, 4.07, 35), Vector3.new(-7, 4.07, 55)) < 7
@@ -380,42 +431,111 @@ function WorldBuilder.build(): World
 		-- roaming space automatically instead of silently spawning under scenery.
 		for _, foe in CombatRules.foes do
 			local encounter = Vector3.new(foe.position.x, 4.07, foe.position.z)
-			local clearingRadius = math.max(CombatRules.patrolRadius + 11, if foe.boss then 28 else 23)
+			local clearingRadius = CombatRules.leashRadius + 11
 			if (point - encounter).Magnitude < clearingRadius then
 				return false
 			end
 		end
-		if x > -32 and x < 13 and z < -84 then
+		if x > -32 and x < 13 and z < -84 and z > -123 then
 			return false
 		end
-		for index = 1, #trailPoints - 1 do
-			if distanceToSegment(point, trailPoints[index], trailPoints[index + 1]) < 9 then
+		for _, landmark in regionLandmarks do
+			if (point - Vector3.new(landmark.x, 4.07, landmark.z)).Magnitude < 23 then
 				return false
 			end
 		end
-		for _, branch in sideTrails do
-			if distanceToSegment(point, branch[1], branch[2]) < 8 then
+		for _, route in sceneryRoutes do
+			if distanceToSegment(point, route.a, route.b) < route.width / 2 + 7 then
 				return false
 			end
 		end
 		return true
 	end
 
+	-- Outer landmarks use different silhouettes, so a route is recognisable
+	-- before its sign is readable. They have no pretend quest/vendor interaction.
+	for _, landmark in regionLandmarks do
+		local x, z = landmark.x, landmark.z
+		local patch = part("RegionClearing", Vector3.new(35, 0.1, 31), CFrame.new(x, 4.05, z), landmark.color, Enum.Material.Grass)
+		patch:SetAttribute("SubregionId", landmark.id)
+		patch.CanCollide = false
+		local sign = part("OuterRegionSign", Vector3.new(7, 1.8, 0.45), CFrame.new(x + 10, 7.2, z - 8), palette.woodLight, Enum.Material.Wood)
+		sign:SetAttribute("SubregionId", landmark.id)
+		part("OuterSignPost", Vector3.new(0.5, 4.5, 0.5), CFrame.new(x + 10, 6.25, z - 8), palette.wood)
+		label(sign, landmark.title)
+	end
+	-- Woodcutters' open hut, with a doorway on the side facing its approach.
+	part("WoodcutterFloor", Vector3.new(12, 0.22, 10), CFrame.new(-154, 4.15, 21), palette.woodLight, Enum.Material.WoodPlanks)
+	part("WoodcutterBack", Vector3.new(12, 6, 0.6), CFrame.new(-154, 7, 26), palette.wood, Enum.Material.Wood)
+	for _, side in { -1, 1 } do
+		part("WoodcutterWall", Vector3.new(0.6, 6, 10), CFrame.new(-154 + side * 6, 7, 21), palette.wood, Enum.Material.Wood)
+		part("WoodcutterRoof", Vector3.new(7.3, 0.6, 14), CFrame.new(-154 + side * 3.15, 11, 21) * CFrame.Angles(0, 0, math.rad(-side * 24)), palette.roof)
+		part("Woodpile", Vector3.new(2, 1.8, 5), CFrame.new(-154 + side * 10, 4.9, 25), palette.woodLight, Enum.Material.Wood)
+	end
+	-- Reeds and connected shallow pools visually distinguish the northern fen.
+	for index = 1, 5 do
+		local fenX = -65 + (index - 1) * 48
+		local water = part("ReedfenPool", Vector3.new(35, 0.12, 19), CFrame.new(fenX, 4.12, -304 + index % 2 * 7), palette.water, Enum.Material.Glass)
+		water.Transparency = 0.3
+		water.CanCollide = false
+		for reed = 1, 5 do
+			local stalk = part("FenReed", Vector3.new(0.2, 2.3 + reed % 2, 0.2), CFrame.new(fenX - 12 + reed * 4.5, 5.45, -313 + index % 2 * 7), palette.leaves)
+			stalk.CanCollide = false
+			local head = part("FenReedHead", Vector3.new(0.45, 0.8, 0.45), stalk.CFrame * CFrame.new(0, 1.45, 0), palette.earth)
+			head.CanCollide = false
+		end
+	end
+	part("FenCampAwning", Vector3.new(12, 0.35, 9), CFrame.new(-29, 9, -294) * CFrame.Angles(0, 0, math.rad(6)), Color3.fromRGB(132, 145, 118), Enum.Material.Fabric)
+	for _, x in { -34, -24 } do
+		for _, z in { -297, -291 } do
+			part("FenCampPost", Vector3.new(0.4, 5, 0.4), CFrame.new(x, 6.5, z), palette.wood)
+		end
+	end
+	part("FenSupplyCrate", Vector3.new(2.4, 2.3, 2.4), CFrame.new(-29, 5.15, -296), palette.woodLight, Enum.Material.WoodPlanks)
+	-- A ruined watchtower is framed by the ridge instead of another floating island.
+	part("OldwatchFoundation", Vector3.new(13, 0.5, 13), CFrame.new(218, 4.25, -191), palette.stone, Enum.Material.Slate)
+	for _, side in { -1, 1 } do
+		for _, endZ in { -1, 1 } do
+			local height = if side == endZ then 18 else 12
+			part("OldwatchPillar", Vector3.new(2.3, height, 2.3), CFrame.new(218 + side * 5, 4 + height / 2, -191 + endZ * 5), palette.stoneLight, Enum.Material.Slate)
+		end
+	end
+	part("OldwatchArchBeam", Vector3.new(12.5, 2.1, 2.3), CFrame.new(218, 16.5, -186), palette.stone)
+	part("OldwatchBrokenWall", Vector3.new(12.5, 5, 1), CFrame.new(218, 6.5, -196), palette.stone)
+	-- A windmill and small crop beds give the southern meadow a lived-in horizon.
+	part("SunmeadowMill", Vector3.new(8, 15, 8), CFrame.new(85, 11.5, 242), palette.cream)
+	part("MillRoof", Vector3.new(10, 2.5, 10), CFrame.new(85, 20, 242) * CFrame.Angles(0, math.rad(45), 0), palette.roof)
+	for _, rotation in { 35, 125 } do
+		local blade = part("MillSail", Vector3.new(0.55, 15, 1.3), CFrame.new(85, 15.2, 237.3) * CFrame.Angles(0, 0, math.rad(rotation)), palette.woodLight, Enum.Material.Wood)
+		blade.CanCollide = false
+	end
+	part("MillDoor", Vector3.new(3, 4.5, 0.1), CFrame.new(85, 6.25, 237.92), palette.wood)
+	for row = 1, 4 do
+		part("MeadowCropBed", Vector3.new(20, 0.18, 2), CFrame.new(112, 4.09, 232 + row * 4), palette.earth, Enum.Material.Ground)
+		for index = 1, 5 do
+			local crop = part("MeadowCrop", Vector3.new(1.7, 1.3, 1.1), CFrame.new(102 + index * 3.2, 4.65, 232 + row * 4), palette.grassLight)
+			crop.CanCollide = false
+		end
+	end
+
 	local random = Random.new(52719)
 	local trees = 0
-	for _ = 1, 240 do
-		if trees >= 40 then
+	for _ = 1, 1200 do
+		if trees >= 140 then
 			break
 		end
-		local x, z = random:NextNumber(-82, 95), random:NextNumber(-133, 76)
+		local x, z = random:NextNumber(-246, 262), random:NextNumber(-320, 262)
 		if clearForScenery(x, z) then
-			tree(x, z, random:NextNumber(0.7, 1.1), z < -45)
+			tree(x, z, random:NextNumber(0.8, 1.3), z < -115 or x < -90)
 			trees += 1
 		end
 	end
-	for index = 1, 26 do
-		local x, z = random:NextNumber(-68, 86), random:NextNumber(-113, 62)
+	local rocks = 0
+	for index = 1, 110 do
+		if rocks >= 65 then break end
+		local x, z = random:NextNumber(-241, 257), random:NextNumber(-315, 257)
 		if clearForScenery(x, z) then
+			rocks += 1
 			local rockSize = random:NextNumber(1.2, 2.8)
 			part("MeadowRock", Vector3.new(rockSize * 1.3, rockSize, rockSize), CFrame.new(x, 4 + rockSize * 0.35, z) * CFrame.Angles(math.rad(15), random:NextNumber(0, math.pi), math.rad(20)), palette.stone)
 			if index % 2 == 0 then
@@ -423,9 +543,12 @@ function WorldBuilder.build(): World
 			end
 		end
 	end
-	for _ = 1, 22 do
-		local x, z = random:NextNumber(-60, 78), random:NextNumber(-105, 58)
+	local flowerPatches = 0
+	for _ = 1, 65 do
+		if flowerPatches >= 30 then break end
+		local x, z = random:NextNumber(-237, 253), random:NextNumber(-307, 250)
 		if clearForScenery(x, z) then
+			flowerPatches += 1
 			for flowerIndex = 1, 3 do
 				local offset = Vector3.new((flowerIndex - 2) * 0.5, 0, flowerIndex % 2 * 0.6)
 				part("MeadowFlower", Vector3.new(0.55, 0.3, 0.55), CFrame.new(Vector3.new(x, 4.3, z) + offset) * CFrame.Angles(0, math.rad(45), 0), if flowerIndex == 2 then Color3.fromRGB(237, 205, 141) else Color3.fromRGB(218, 183, 195))
@@ -474,6 +597,13 @@ function WorldBuilder.build(): World
 	world:SetAttribute("PrototypeGeometry", true)
 	world:SetAttribute("RegionName", "Greywater Reach")
 	world:SetAttribute("TravelImplemented", false)
+	world:SetAttribute("PlayableWidth", meadowWidth)
+	world:SetAttribute("PlayableDepth", meadowDepth)
+	world:SetAttribute("PlayableArea", meadowWidth * meadowDepth)
+	world:SetAttribute("PreviousPlayableArea", 220 * 260)
+	world:SetAttribute("AreaMultiplier", meadowWidth * meadowDepth / (220 * 260))
+	world:SetAttribute("EnemySpawnCount", #CombatRules.foes)
+	world:SetAttribute("SubregionCount", #regionLandmarks + 1)
 
 	return {
 		prompts = prompts,

@@ -6,6 +6,7 @@ local Vector3 = require("@lune/roblox").Vector3
 local Expedition = require("../src/shared/Expedition")
 local HuntMetrics = require("../src/shared/HuntMetrics")
 local CombatRules = require("../src/shared/CombatRules")
+local Progression = require("../src/shared/Progression")
 local now, checks = 0, 0
 local function check(condition, message)
 	assert(condition, message)
@@ -58,8 +59,9 @@ for index, id in { "start", "return", "moss", "river", "ruins" } do
 		Parent = { Position = Vector3.new(index * 20, 0, 0), IsA = function(_, class) return class == "BasePart" end },
 	}
 end
-local tokens = { Expedition = {}, HuntMetrics = {}, CombatRules = {}, DodgeRules = {}, WorldBuilder = {}, CombatService = {}, DodgeService = {} }
-local shared = { WaitForChild = function(_, name) return assert(tokens[name], name) end }
+local tokens = { Expedition = {}, HuntMetrics = {}, CombatRules = {}, DodgeRules = {}, WorldBuilder = {}, CombatService = {}, DodgeService = {}, PetService = {}, Progression = {} }
+local shared = { WaitForChild = function(_, name) return assert(tokens[name], name) end, attributes = {} }
+function shared:SetAttribute(key, value) self.attributes[key] = value end
 local remotes = {}
 local instances = { new = function(class)
 	local instance = { class = class }
@@ -72,9 +74,10 @@ local instances = { new = function(class)
 	end
 	return instance
 end }
-local getState, defeated, bondEffect, closed
+local getState, defeated, bondEffect, killed, closed
 local attacks, bonds, destroyed = 0, 0, 0
 local dodges, dodgeDestroyed, dodgeInputs = 0, 0, {}
+local petDestroyed = 0
 local swingAllowed = true
 local swingHit = true
 local swingTarget = Vector3.new(6, 7, 9)
@@ -103,13 +106,18 @@ local modules = {
 	[tokens.Expedition] = Expedition,
 	[tokens.HuntMetrics] = HuntMetrics,
 	[tokens.CombatRules] = CombatRules,
+	[tokens.Progression] = Progression,
 	[tokens.DodgeRules] = require("../src/shared/DodgeRules"),
 	[tokens.WorldBuilder] = { build = function() return { prompts = prompts } end },
-	[tokens.CombatService] = { start = function(stateCallback, defeatCallback, effectCallback)
-		getState, defeated, bondEffect = stateCallback, defeatCallback, effectCallback
+	[tokens.CombatService] = { start = function(stateCallback, defeatCallback, effectCallback, killCallback)
+		getState, defeated, bondEffect, killed = stateCallback, defeatCallback, effectCallback, killCallback
 		return combat
 	end },
 	[tokens.DodgeService] = { start = function() return dodge end },
+	[tokens.PetService] = { start = function(stateCallback, combatService, effectCallback)
+		assert(combatService == combat and stateCallback(hunter) == nil, "Pet service starts with lazy state callbacks")
+		return { destroy = function() petDestroyed += 1 end }
+	end },
 }
 luau.load(fs.readFile("src/server/init.server.luau"), {
 	debugName = "init.server",
@@ -148,12 +156,16 @@ check(health.Health == 100 and health.MaxHealth == 100 and spectatorHealth.Healt
 command.OnServerEvent:Fire(hunter, "sync")
 local initial = latest(hunter)[1]
 check(initial.shells == 0 and not initial.active and initial.timing.elapsed == nil, "Initial snapshot includes inactive timing")
+check(initial.progression.level == 1 and initial.progression.coins == 0 and initial.progression.xp == 0 and initial.progression.nextLevelXp == 60, "Initial server snapshot includes the actual session profile")
 initial.owned.fake, initial.defeated.moss, initial.timing.deaths = true, true, 999
+initial.progression.coins, initial.progression.xp = 999999, 59
 now = 1
 command.OnServerEvent:Fire(hunter, "sync")
 command.OnServerEvent:Fire(spectator, "sync")
 check(not latest(hunter)[1].owned.fake and not latest(hunter)[1].defeated.moss and latest(hunter)[1].timing.deaths == 0, "Mutating delivered snapshots cannot change server progression or metrics")
 check(not latest(spectator)[1].active and latest(spectator)[1].shells == 0, "Players have independent snapshots")
+check(latest(hunter)[1].progression.coins == 0 and latest(hunter)[1].progression.xp == 0, "Delivered progression is detached from the authoritative profile")
+check(shared.attributes.BuildVersion == "0.4.0", "Fresh builds identify the current game version")
 
 now = 2
 health.Health = 40
@@ -247,6 +259,15 @@ check(latest(hunter)[3] == false and latest(hunter)[1].shells == 60 and health.H
 now = 36
 trigger("start")
 check(latest(hunter)[1].timing.elapsed == 0 and latest(hunter)[1].timing.deaths == 0 and latest(hunter)[1].timing.lastDuration == 33, "Repeat hunt resets current metrics and preserves history")
+for _ = 1, 6 do killed(hunter, { kind = "sprout", boss = false }) end
+local profile = latest(hunter)[1].progression
+check(profile.coins == 30 and profile.level == 2 and profile.xp == 0 and profile.nextLevelXp == 85, "Validated kill callbacks award coins/XP and carry level changes into the HUD snapshot")
+check(latest(hunter)[1].shells == 60 and latest(hunter)[1].active and health.Health == 100, "Kill rewards do not mint shells, complete quests or alter character HP")
+command.OnServerEvent:Fire(spectator, "sync")
+check(latest(spectator)[1].progression.coins == 0 and latest(spectator)[1].progression.level == 1, "Kill profile rewards remain per contributor, independent of spectators")
+local profileMessages = #update.calls
+killed(hunter, { kind = "unknown", boss = false, coins = 999999 })
+check(#update.calls == profileMessages, "An invalid reward catalog entry does not mint coins or deliver a success snapshot")
 players.PlayerRemoving:Fire(hunter)
 hunter.Parent = nil
 check(getState(hunter) == nil, "Leaving clears server session data")
@@ -258,6 +279,7 @@ prompts.start.Triggered:Fire(hunter)
 command.OnServerEvent:Fire(hunter, "sync")
 command.OnServerEvent:Fire(hunter, "attack")
 command.OnServerEvent:Fire(hunter, "dodge", Vector3.new(0, 0, -1))
+killed(hunter, { kind = "sprout", boss = false })
 check(#update.calls == sent and attacks == 2, "Late death, defeat, prompt and command events safely ignore a departed player")
 check(#dodgeInputs == 2 and dodges == 1, "Departed players cannot reach the dodge service")
 players.PlayerAdded:Fire(hunter)
@@ -265,7 +287,9 @@ hunter.Parent = players
 now = 37
 command.OnServerEvent:Fire(hunter, "sync")
 check(latest(hunter)[1].shells == 0 and latest(hunter)[1].timing.lastDuration == nil and latest(hunter)[1].timing.deaths == 0, "A new session has no leaked metrics or rewards")
+check(latest(hunter)[1].progression.level == 1 and latest(hunter)[1].progression.coins == 0 and latest(hunter)[1].progression.xp == 0, "A new session resets the profile rather than leaking the departed session")
 closed()
 check(destroyed == 1, "Server shutdown destroys the combat service")
 check(dodgeDestroyed == 1, "Server shutdown also destroys active movement service state")
+check(petDestroyed == 1 and shared.attributes.BuildVersion == "0.4.0", "Shutdown destroys companion state and build version identifies the current place")
 print("Server wiring: " .. checks .. " entrypoint/rules checks passed; Roblox signals, networking and physics remain untested")

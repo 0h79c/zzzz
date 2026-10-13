@@ -72,6 +72,24 @@ local ambient = {
 	{ id = "brush04", name = "Bramble Forager", kind = "sprout", x = 70, z = 33, health = 80, damage = 6 },
 	{ id = "brush05", name = "Reed Warden", kind = "reed", x = -40, z = -100, health = 100, damage = 7 },
 	{ id = "brush06", name = "Reed Warden", kind = "reed", x = 50, z = -116, health = 100, damage = 7 },
+	-- The outer routes add places to hunt without making the first expedition
+	-- longer. These creatures use the same readable four species and attack rules.
+	{ id = "forest01", name = "Bramble Forager", kind = "sprout", x = -125, z = -20, health = 80, damage = 6 },
+	{ id = "forest02", name = "Brush Boar", kind = "boar", x = -192, z = -52, health = 75, damage = 6 },
+	{ id = "forest03", name = "Brush Boar", kind = "boar", x = -207, z = -145, health = 75, damage = 6 },
+	{ id = "forest04", name = "Bramble Forager", kind = "sprout", x = -119, z = -147, health = 80, damage = 6 },
+	{ id = "marsh01", name = "Reed Warden", kind = "reed", x = -92, z = -218, health = 100, damage = 7 },
+	{ id = "marsh02", name = "Reed Warden", kind = "reed", x = -12, z = -243, health = 100, damage = 7 },
+	{ id = "marsh03", name = "Reed Warden", kind = "reed", x = 70, z = -229, health = 100, damage = 7 },
+	{ id = "marsh04", name = "Reed Warden", kind = "reed", x = 180, z = -258, health = 100, damage = 7 },
+	{ id = "outskirts01", name = "Bramble Forager", kind = "sprout", x = 154, z = -140, health = 80, damage = 6 },
+	{ id = "outskirts02", name = "Brush Boar", kind = "boar", x = 220, z = -70, health = 75, damage = 6 },
+	{ id = "outskirts03", name = "Bramble Forager", kind = "sprout", x = 210, z = 37, health = 80, damage = 6 },
+	{ id = "meadow01", name = "Brush Boar", kind = "boar", x = 175, z = 132, health = 75, damage = 6 },
+	{ id = "meadow02", name = "Bramble Forager", kind = "sprout", x = 85, z = 188, health = 80, damage = 6 },
+	{ id = "meadow03", name = "Bramble Forager", kind = "sprout", x = -24, z = 187, health = 80, damage = 6 },
+	{ id = "meadow04", name = "Brush Boar", kind = "boar", x = -150, z = 166, health = 75, damage = 6 },
+	{ id = "forest05", name = "Brush Boar", kind = "boar", x = -219, z = 83, health = 75, damage = 6 },
 }
 for _, spawn in ambient do
 	table.insert(foes, {
