@@ -1,0 +1,2090 @@
+<roblox version="4">
+  <Item class="ReplicatedStorage" referent="0">
+    <Properties>
+      <string name="Name">ReplicatedStorage</string>
+    </Properties>
+    <Item class="Folder" referent="1">
+      <Properties>
+        <string name="Name">Wildbond</string>
+      </Properties>
+      <Item class="ModuleScript" referent="2">
+        <Properties>
+          <string name="Name">CombatRules</string>
+          <string name="Source"><![CDATA[--!strict
+-- Pure combat decisions shared with the test runner. Clients never choose a target.
+local CombatRules = {}
+
+export type Point = { x: number, y: number, z: number }
+export type HuntState = {
+	active: boolean, defeated: { [string]: boolean },
+	owned: { [string]: boolean }?, equipped: string?,
+	equipRevision: number?,
+}
+export type FoeDefinition = {
+	id: string,
+	name: string,
+	position: Point,
+	maxHealth: number,
+	slamDamage: number,
+	slamRadius: number,
+	windup: number,
+	boss: boolean,
+}
+
+CombatRules.meleeDamage = 10
+CombatRules.playerMaxHealth = 100
+CombatRules.meleeRange = 8
+CombatRules.meleeCooldown = 0.6
+CombatRules.petDamage = 18
+CombatRules.petRange = 18
+CombatRules.petCooldown = 3.2
+CombatRules.petWindup = 0.3
+CombatRules.aggroRange = 22
+CombatRules.rewardRange = 40
+CombatRules.slamCooldown = 2.4
+CombatRules.firstSlamDelay = 0.8
+CombatRules.respawnDelay = 6
+CombatRules.encounterResetDelay = 10
+CombatRules.maxGroupSize = 4
+CombatRules.groupHealthPerPlayer = 0.65
+CombatRules.bossBurstRadius = 10
+CombatRules.slamHeightTolerance = 8
+CombatRules.groundHeight = 4.1
+
+local foes: { FoeDefinition } = {
+	{
+		id = "moss", name = "Bramble Sprout", position = { x = -45, y = 7, z = -17 },
+		maxHealth = 140, slamDamage = 12, slamRadius = 5, windup = 0.9, boss = false,
+	},
+	{
+		id = "river", name = "Reed Guardian", position = { x = 0, y = 7, z = -57 },
+		maxHealth = 200, slamDamage = 16, slamRadius = 5, windup = 1.0, boss = false,
+	},
+	{
+		id = "ruins", name = "The Hollow Crown", position = { x = 65, y = 8, z = -72 },
+		maxHealth = 600, slamDamage = 22, slamRadius = 7, windup = 1.2, boss = true,
+	},
+}
+local knownIds: { [string]: boolean } = {}
+for _, foe in foes do
+	knownIds[foe.id] = true
+	table.freeze(foe.position)
+	table.freeze(foe)
+end
+CombatRules.foes = table.freeze(foes)
+
+local function finite(value: number): boolean
+	return value == value and value > -math.huge and value < math.huge
+end
+
+function CombatRules.distanceSquared(a: Point, b: Point): number
+	local dx, dy, dz = a.x - b.x, a.y - b.y, a.z - b.z
+	return dx * dx + dy * dy + dz * dz
+end
+
+function CombatRules.inRange(a: Point, b: Point, radius: number): boolean
+	local squared = CombatRules.distanceSquared(a, b)
+	return finite(radius) and radius >= 0 and finite(squared) and squared <= radius * radius
+end
+
+function CombatRules.cooldownReady(now: number, previous: number?, cooldown: number): boolean
+	if not finite(now) or not finite(cooldown) or cooldown < 0 then
+		return false
+	end
+	if previous == nil then
+		return true
+	end
+	return finite(previous) and now >= previous and now >= previous + cooldown
+end
+
+-- Companions are collection choices: spending shells never buys stronger combat.
+function CombatRules.canBond(state: HuntState?): boolean
+	if state == nil or state.owned == nil or state.equipped == nil then
+		return false
+	end
+	local id = state.equipped
+	return (id == "mosswolf" or id == "emberfox" or id == "tidecub") and state.owned[id] == true
+end
+
+function CombatRules.scaledHealth(base: number, participants: number): number
+	local count = math.clamp(math.floor(participants), 1, CombatRules.maxGroupSize)
+	return math.floor(base * (1 + CombatRules.groupHealthPerPlayer * (count - 1)) + 0.5)
+end
+
+function CombatRules.attackPattern(definition: FoeDefinition, sequence: number)
+	local centered = definition.boss and sequence % 2 == 0
+	return {
+		centered = centered,
+		radius = if centered then CombatRules.bossBurstRadius else definition.slamRadius,
+		windup = definition.windup,
+		damage = definition.slamDamage,
+	}
+end
+
+function CombatRules.eligible(state: HuntState?, alive: boolean, foeId: string): boolean
+	return alive and state ~= nil and state.active == true
+		and knownIds[foeId] == true and state.defeated[foeId] ~= true
+end
+
+function CombatRules.canReward(
+	state: HuntState?, alive: boolean, connected: boolean, contributed: boolean,
+	foeId: string, playerPosition: Point, foePosition: Point
+): boolean
+	return connected and contributed and CombatRules.eligible(state, alive, foeId)
+		and CombatRules.inRange(playerPosition, foePosition, CombatRules.rewardRange)
+end
+
+-- Slams hit a ground disk, with a height limit so distant platforms are safe.
+function CombatRules.inSlam(playerPosition: Point, center: Point, radius: number): boolean
+	local dx, dz = playerPosition.x - center.x, playerPosition.z - center.z
+	local planarSquared = dx * dx + dz * dz
+	local height = math.abs(playerPosition.y - center.y)
+	return finite(radius) and radius >= 0 and finite(planarSquared) and finite(height)
+		and planarSquared <= radius * radius and height <= CombatRules.slamHeightTolerance
+end
+
+return table.freeze(CombatRules)
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="3">
+        <Properties>
+          <string name="Name">Expedition</string>
+          <string name="Source"><![CDATA[--!strict
+-- Pure server-owned game rules. This module has no Roblox service dependencies.
+local Expedition = {}
+
+export type State = {
+	shells: number,
+	huntsCompleted: number,
+	active: boolean,
+	defeated: { [string]: boolean },
+	collected: { [string]: boolean },
+	owned: { [string]: boolean },
+	equipped: string,
+	equipRevision: number,
+}
+
+export type Pet = { read id: string, read name: string, read cost: number }
+
+local targetIds = table.freeze({ "moss", "river", "ruins" })
+local targetSet: { [string]: boolean } = { moss = true, river = true, ruins = true }
+local pets: { Pet } = table.freeze({
+	table.freeze({ id = "mosswolf", name = "Moss Wolf", cost = 0 }),
+	table.freeze({ id = "emberfox", name = "Ember Fox", cost = 120 }),
+	table.freeze({ id = "tidecub", name = "Tide Cub", cost = 240 }),
+})
+local petById: { [string]: Pet } = {}
+for _, pet in pets do
+	petById[pet.id] = pet
+end
+
+local reward = 60
+
+Expedition.targetIds = targetIds
+Expedition.pets = pets
+Expedition.reward = reward
+
+local function emptyTargets(): { [string]: boolean }
+	return { moss = false, river = false, ruins = false }
+end
+
+local function isTarget(id: any): boolean
+	return typeof(id) == "string" and targetSet[id] == true
+end
+
+function Expedition.new(): State
+	return {
+		shells = 0,
+		huntsCompleted = 0,
+		active = false,
+		defeated = emptyTargets(),
+		collected = emptyTargets(),
+		owned = { mosswolf = true },
+		equipped = "mosswolf",
+		equipRevision = 0,
+	}
+end
+
+function Expedition.snapshot(state: State): State
+	local defeated: { [string]: boolean } = {}
+	local collected: { [string]: boolean } = {}
+	local owned: { [string]: boolean } = {}
+	for id, value in state.defeated do
+		defeated[id] = value
+	end
+	for id, value in state.collected do
+		collected[id] = value
+	end
+	for id, value in state.owned do
+		owned[id] = value
+	end
+	return {
+		shells = state.shells,
+		huntsCompleted = state.huntsCompleted,
+		active = state.active,
+		defeated = defeated,
+		collected = collected,
+		owned = owned,
+		equipped = state.equipped,
+		equipRevision = state.equipRevision,
+	}
+end
+
+function Expedition.start(state: State): (boolean, string)
+	if state.active then
+		return false, "Finish your current expedition first."
+	end
+	state.defeated = emptyTargets()
+	state.collected = emptyTargets()
+	state.active = true
+	return true, "Expedition started. Defeat the three guardians and collect their crystals."
+end
+
+function Expedition.defeat(state: State, id: any): (boolean, string)
+	if not isTarget(id) then
+		return false, "Unknown guardian."
+	end
+	if not state.active then
+		return false, "Start an expedition first."
+	end
+	if state.defeated[id] then
+		return false, "This guardian is already defeated."
+	end
+	state.defeated[id] = true
+	return true, "Guardian defeated. Collect its crystal."
+end
+
+function Expedition.collect(state: State, id: any): (boolean, string)
+	if not isTarget(id) then
+		return false, "Unknown crystal."
+	end
+	if not state.active then
+		return false, "Start an expedition first."
+	end
+	if not state.defeated[id] then
+		return false, "Defeat this crystal's guardian first."
+	end
+	if state.collected[id] then
+		return false, "This crystal is already collected."
+	end
+	state.collected[id] = true
+	return true, "Crystal collected."
+end
+
+function Expedition.claim(state: State): (boolean, string)
+	if not state.active then
+		return false, "No expedition reward is waiting."
+	end
+	for _, id in targetIds do
+		if not state.collected[id] then
+			return false, "Collect all three crystals before returning for your reward."
+		end
+	end
+	state.shells += reward
+	state.huntsCompleted += 1
+	state.active = false
+	return true, "Expedition complete! You earned 60 shells."
+end
+
+function Expedition.unlock(state: State, id: any): (boolean, string)
+	if typeof(id) ~= "string" or petById[id] == nil then
+		return false, "Unknown companion."
+	end
+	local pet = petById[id]
+	if state.owned[id] then
+		return false, "You already own this companion."
+	end
+	if state.shells < pet.cost then
+		return false, "You need more shells for this companion."
+	end
+	state.shells -= pet.cost
+	state.owned[id] = true
+	return true, pet.name .. " joined your collection."
+end
+
+function Expedition.equip(state: State, id: any): (boolean, string)
+	if typeof(id) ~= "string" or petById[id] == nil then
+		return false, "Unknown companion."
+	end
+	if not state.owned[id] then
+		return false, "Unlock this companion first."
+	end
+	if state.equipped ~= id then
+		state.equipRevision += 1
+		state.equipped = id
+	end
+	return true, petById[id].name .. " is now your companion."
+end
+
+return table.freeze(Expedition)
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="4">
+        <Properties>
+          <string name="Name">HuntMetrics</string>
+          <string name="Source"><![CDATA[--!strict
+-- Server-clock measurements for playtesting; these never change rewards.
+local HuntMetrics = {}
+
+export type Metrics = {
+	startedAt: number?,
+	deaths: number,
+	lastDuration: number?,
+	bestDuration: number?,
+	lastDeaths: number?,
+}
+
+local function validTime(now: number): boolean
+	return now == now and now >= 0 and now < math.huge
+end
+
+function HuntMetrics.new(): Metrics
+	return { startedAt = nil, deaths = 0, lastDuration = nil, bestDuration = nil, lastDeaths = nil }
+end
+
+function HuntMetrics.start(metrics: Metrics, now: number): boolean
+	if metrics.startedAt ~= nil or not validTime(now) then
+		return false
+	end
+	metrics.startedAt = now
+	metrics.deaths = 0
+	return true
+end
+
+function HuntMetrics.death(metrics: Metrics)
+	if metrics.startedAt ~= nil then
+		metrics.deaths += 1
+	end
+end
+
+function HuntMetrics.finish(metrics: Metrics, now: number): boolean
+	local start = metrics.startedAt
+	if start == nil or not validTime(now) or now < start then
+		return false
+	end
+	local duration = now - start
+	metrics.lastDuration = duration
+	metrics.lastDeaths = metrics.deaths
+	metrics.bestDuration = if metrics.bestDuration then math.min(metrics.bestDuration, duration) else duration
+	metrics.startedAt = nil
+	return true
+end
+
+function HuntMetrics.snapshot(metrics: Metrics, now: number)
+	local startedAt = metrics.startedAt
+	return {
+		elapsed = if startedAt and validTime(now) and now >= startedAt then now - startedAt else nil,
+		deaths = metrics.deaths,
+		lastDuration = metrics.lastDuration,
+		bestDuration = metrics.bestDuration,
+		lastDeaths = metrics.lastDeaths,
+	}
+end
+
+return table.freeze(HuntMetrics)
+]]></string>
+        </Properties>
+      </Item>
+    </Item>
+  </Item>
+  <Item class="ServerScriptService" referent="5">
+    <Properties>
+      <string name="Name">ServerScriptService</string>
+    </Properties>
+    <Item class="Script" referent="6">
+      <Properties>
+        <string name="Name">WildbondServer</string>
+        <token name="RunContext">0</token>
+        <string name="Source"><![CDATA[--!nonstrict
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local shared = ReplicatedStorage:WaitForChild("Wildbond")
+local Expedition = require(shared:WaitForChild("Expedition"))
+local CombatRules = require(shared:WaitForChild("CombatRules"))
+local HuntMetrics = require(shared:WaitForChild("HuntMetrics"))
+local WorldBuilder = require(script:WaitForChild("WorldBuilder"))
+local CombatService = require(script:WaitForChild("CombatService"))
+local world = WorldBuilder.build()
+
+local remotes = Instance.new("Folder")
+remotes.Name = "Remotes"
+remotes.Parent = shared
+local command = Instance.new("RemoteEvent")
+command.Name = "Command"
+command.Parent = remotes
+local update = Instance.new("RemoteEvent")
+update.Name = "Update"
+update.Parent = remotes
+local effect = Instance.new("RemoteEvent")
+effect.Name = "Effect"
+effect.Parent = remotes
+
+-- This alpha deliberately keeps session data in memory. No Robux purchases exist.
+local sessions = {}
+local measurements = {}
+local lastCommand = {}
+local lastPrompt = {}
+local actionIntervals = { sync = 1, attack = 0.1, bond = 0.1, unlock = 0.25, equip = 0.25 }
+
+local function send(player, message, success)
+	local state = sessions[player]
+	if not state or player.Parent ~= Players then
+		return
+	end
+	player:SetAttribute("CompanionId", state.equipped)
+	local snapshot = Expedition.snapshot(state)
+	snapshot.timing = HuntMetrics.snapshot(measurements[player], os.clock())
+	update:FireClient(player, snapshot, message, success)
+end
+
+local combat = CombatService.start(function(player)
+	return sessions[player]
+end, function(player, id)
+	local state = sessions[player]
+	if state then
+		local success, message = Expedition.defeat(state, id)
+		send(player, message, success)
+	end
+end, function(player, targetPosition)
+	effect:FireClient(player, "bond", targetPosition)
+end)
+
+local function addPlayer(player)
+	if sessions[player] then
+		return
+	end
+	sessions[player] = Expedition.new()
+	measurements[player] = HuntMetrics.new()
+	player:SetAttribute("CompanionId", "mosswolf")
+	local function characterAdded(character)
+		local humanoid = character:WaitForChild("Humanoid", 10)
+		if humanoid then
+			humanoid.MaxHealth = CombatRules.playerMaxHealth
+			humanoid.Health = humanoid.MaxHealth
+			humanoid.Died:Once(function()
+				if measurements[player] then
+					HuntMetrics.death(measurements[player])
+				end
+				send(player, "Take a breath. Your hunt progress stays when you respawn.", false)
+			end)
+		end
+	end
+	player.CharacterAdded:Connect(characterAdded)
+	if player.Character then
+		task.spawn(characterAdded, player.Character)
+	end
+end
+
+Players.PlayerAdded:Connect(addPlayer)
+Players.PlayerRemoving:Connect(function(player)
+	sessions[player] = nil
+	measurements[player] = nil
+	lastCommand[player] = nil
+	lastPrompt[player] = nil
+end)
+for _, player in Players:GetPlayers() do
+	addPlayer(player)
+end
+
+-- ProximityPrompt events still need server distance and alive checks.
+for id, prompt in world.prompts do
+	prompt.Triggered:Connect(function(player)
+		local state = sessions[player]
+		local character = player.Character
+		local root = character and character:FindFirstChild("HumanoidRootPart")
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+		local landmark = prompt.Parent
+		if not state or not root or not humanoid or humanoid.Health <= 0 or not landmark:IsA("BasePart") then
+			return
+		end
+		if (root.Position - landmark.Position).Magnitude > 14 then
+			return
+		end
+		local now = os.clock()
+		if now - (lastPrompt[player] or -math.huge) < 0.25 then
+			return
+		end
+		lastPrompt[player] = now
+		local success, message
+		if id == "start" then
+			success, message = Expedition.start(state)
+			if success then
+				HuntMetrics.start(measurements[player], now)
+				humanoid.Health = humanoid.MaxHealth
+			end
+		elseif id == "return" then
+			success, message = Expedition.claim(state)
+			if success then
+				HuntMetrics.finish(measurements[player], now)
+				humanoid.Health = humanoid.MaxHealth
+				local duration = measurements[player].lastDuration or 0
+				message = string.format("Hunt complete! +60 shells · %d:%02d · %d falls", math.floor(duration / 60), math.floor(duration % 60), measurements[player].lastDeaths or 0)
+			end
+		else
+			success, message = Expedition.collect(state, id)
+		end
+		send(player, message, success)
+	end)
+end
+
+command.OnServerEvent:Connect(function(player, action, petId)
+	if typeof(action) ~= "string" or #action > 20 then
+		return
+	end
+	local interval = actionIntervals[action]
+	if not interval then return end
+	local state = sessions[player]
+	if not state then
+		return
+	end
+	local now = os.clock()
+	local history = lastCommand[player]
+	if not history then
+		history = {}
+		lastCommand[player] = history
+	end
+	if now - (history[action] or -math.huge) < interval then
+		return
+	end
+	history[action] = now
+	if action == "sync" then
+		send(player)
+	elseif action == "attack" then
+		local success, message = combat.attack(player)
+		-- Quiet successful swings; keep mission text visible during combat.
+		if not success and message ~= "Your next swing is not ready yet." then
+			send(player, message, false)
+		end
+	elseif action == "bond" then
+		local success, message = combat.bond(player)
+		if not success then send(player, message, false) end
+	elseif action == "unlock" or action == "equip" then
+		if typeof(petId) ~= "string" or #petId > 32 then
+			return
+		end
+		local success, message = Expedition[action](state, petId)
+		send(player, message, success)
+	end
+end)
+
+game:BindToClose(function()
+	combat.destroy()
+end)
+
+print("Wildbond alpha ready: measured hunts, server pet strikes and guardians; purchases disabled.")
+]]></string>
+      </Properties>
+      <Item class="ModuleScript" referent="7">
+        <Properties>
+          <string name="Name">CombatService</string>
+          <string name="Source"><![CDATA[--!strict
+-- Guardians and combat decisions live on the server. The attack remote supplies no target.
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+
+local Rules = require(ReplicatedStorage:WaitForChild("Wildbond"):WaitForChild("CombatRules"))
+
+type HuntState = Rules.HuntState
+type Definition = Rules.FoeDefinition
+type Actor = { character: Model, humanoid: Humanoid, root: BasePart }
+type Slam = { center: Vector3, radius: number, resolveAt: number, disc: Part }
+type Foe = {
+	definition: Definition,
+	model: Model,
+	root: Part,
+	health: number,
+	maxHealth: number,
+	alive: boolean,
+	contributors: { [Player]: Model },
+	participants: { [Player]: boolean },
+	participantCount: number,
+	life: number,
+	engaged: boolean,
+	lastNearby: number,
+	pattern: number,
+	nextSlam: number,
+	respawnAt: number?,
+	slam: Slam?,
+	transparencies: { [BasePart]: number },
+	label: BillboardGui,
+	healthText: TextLabel,
+	healthFill: Frame,
+	highlight: Highlight,
+	flashUntil: number,
+}
+
+local CombatService = {}
+
+local function point(position: Vector3): Rules.Point
+	return { x = position.X, y = position.Y, z = position.Z }
+end
+
+local function actor(player: Player): Actor?
+	if player.Parent ~= Players then
+		return nil
+	end
+	local character = player.Character
+	if not character or character.Parent == nil then
+		return nil
+	end
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	local root = character:FindFirstChild("HumanoidRootPart")
+	if not humanoid or humanoid.Health <= 0 or not root or not root:IsA("BasePart") then
+		return nil
+	end
+	return { character = character, humanoid = humanoid, root = root }
+end
+
+local function part(
+	parent: Instance, name: string, size: Vector3, position: CFrame, color: Color3,
+	shape: Enum.PartType?
+): Part
+	local object = Instance.new("Part")
+	object.Name = name
+	object.Anchored = true
+	object.CanCollide = false
+	object.CanTouch = false
+	object.Size = size
+	object.CFrame = position
+	object.Color = color
+	object.Material = Enum.Material.SmoothPlastic
+	object.TopSurface = Enum.SurfaceType.Smooth
+	object.BottomSurface = Enum.SurfaceType.Smooth
+	if shape then
+		object.Shape = shape
+	end
+	object.Parent = parent
+	return object
+end
+
+local function buildFoe(parent: Instance, definition: Definition, now: number): Foe
+	local model = Instance.new("Model")
+	model.Name = definition.name
+	model:SetAttribute("EnemyId", definition.id)
+	model:SetAttribute("Health", definition.maxHealth)
+	model:SetAttribute("MaxHealth", definition.maxHealth)
+	model:SetAttribute("Status", "Ready")
+	model:SetAttribute("PartySize", 1)
+	model.Parent = parent
+	local spawn = definition.position
+	local center = Vector3.new(spawn.x, spawn.y, spawn.z)
+	local scale = if definition.boss then 1.4 else 1
+	local bark = if definition.id == "river" then Color3.fromRGB(80, 115, 117) else Color3.fromRGB(108, 86, 63)
+	local stone = if definition.boss then Color3.fromRGB(114, 119, 94) else Color3.fromRGB(143, 139, 112)
+	local leaves = if definition.id == "river" then Color3.fromRGB(74, 181, 156) else Color3.fromRGB(120, 166, 76)
+	local glow = if definition.boss then Color3.fromRGB(255, 174, 72) else Color3.fromRGB(171, 248, 164)
+	local function shaped(name: string, size: Vector3, offset: Vector3, color: Color3, angles: Vector3?): Part
+		local rotation = angles or Vector3.zero
+		return part(model, name, size * scale, CFrame.new(center + offset * scale)
+			* CFrame.Angles(math.rad(rotation.X), math.rad(rotation.Y), math.rad(rotation.Z)), color)
+	end
+	local body = shaped("BarkCore", Vector3.new(3.1, 3.35, 2.5), Vector3.zero, bark, Vector3.new(0, 0, -3))
+	body.CanCollide = true
+	model.PrimaryPart = body
+	shaped("StoneApron", Vector3.new(2.7, 1.5, 0.6), Vector3.new(0, -0.65, 1.35), stone, Vector3.new(0, 0, 6))
+	shaped("ChestRune", Vector3.new(0.45, 1.15, 0.14), Vector3.new(0, -0.25, 1.69), glow).Material = Enum.Material.Neon
+	shaped("Head", Vector3.new(2.7, 1.9, 2.3), Vector3.new(0, 2.15, 0), stone, Vector3.new(0, 5, 2))
+	for _, direction in { -1, 1 } do
+		shaped("RootLeg", Vector3.new(1.15, 1.85, 1.3), Vector3.new(direction * 0.92, -2.05, 0), bark,
+			Vector3.new(0, direction * 10, direction * 3))
+		shaped("RootFoot", Vector3.new(1.5, 0.5, 1.85), Vector3.new(direction * 1.02, -2.77, 0.3), stone)
+		shaped("BranchArm", Vector3.new(0.95, 2.6, 1.1), Vector3.new(direction * 2.02, -0.4, 0), bark,
+			Vector3.new(0, 0, direction * 17))
+		shaped("KnottedFist", Vector3.new(1.4, 1.15, 1.4), Vector3.new(direction * 2.4, -1.62, 0.15), stone,
+			Vector3.new(0, direction * 14, direction * 8))
+		shaped("Eye", Vector3.new(0.36, 0.32, 0.15), Vector3.new(direction * 0.64, 2.35, 1.2), glow).Material = Enum.Material.Neon
+		shaped("TwigCrown", Vector3.new(0.33, 2.05, 0.4), Vector3.new(direction * 0.85, 3.48, -0.35), bark,
+			Vector3.new(12, 0, -direction * 22))
+		shaped("LeafCrown", Vector3.new(1.25, 0.62, 1.1), Vector3.new(direction * 1.3, 4.07, -0.4), leaves,
+			Vector3.new(5, direction * 20, -direction * 12))
+	end
+	shaped("Brow", Vector3.new(2.35, 0.27, 0.33), Vector3.new(0, 2.64, 1.14), bark, Vector3.new(0, 0, 3))
+	shaped("MossShoulder", Vector3.new(1.85, 0.65, 1.75), Vector3.new(-1.27, 1.68, -0.1), leaves,
+		Vector3.new(0, -12, 9))
+	if definition.boss then
+		shaped("AncientCrest", Vector3.new(0.9, 1.3, 0.55), Vector3.new(0, 3.47, 0.2), glow,
+			Vector3.new(0, 0, 45)).Material = Enum.Material.Neon
+	end
+
+	local label = Instance.new("BillboardGui")
+	label.Name = "GuardianHealth"
+	label.Adornee = body
+	label.Size = UDim2.fromOffset(220, 68)
+	label.StudsOffsetWorldSpace = Vector3.new(0, 6 * scale, 0)
+	label.MaxDistance = 90
+	label.AlwaysOnTop = true
+	label.Parent = model
+	local title = Instance.new("TextLabel")
+	title.BackgroundTransparency = 1
+	title.Size = UDim2.new(1, 0, 0, 28)
+	title.Font = Enum.Font.GothamBold
+	title.TextSize = if definition.boss then 19 else 17
+	title.TextColor3 = Color3.fromRGB(255, 245, 219)
+	title.TextStrokeTransparency = 0.35
+	title.Text = definition.name
+	title.Parent = label
+	local track = Instance.new("Frame")
+	track.Position = UDim2.fromOffset(15, 32)
+	track.Size = UDim2.new(1, -30, 0, 10)
+	track.BackgroundColor3 = Color3.fromRGB(30, 38, 35)
+	track.BorderSizePixel = 0
+	track.Parent = label
+	local trackCorner = Instance.new("UICorner")
+	trackCorner.CornerRadius = UDim.new(1, 0)
+	trackCorner.Parent = track
+	local fill = Instance.new("Frame")
+	fill.Size = UDim2.fromScale(1, 1)
+	fill.BackgroundColor3 = if definition.boss then Color3.fromRGB(240, 171, 70) else Color3.fromRGB(142, 203, 105)
+	fill.BorderSizePixel = 0
+	fill.Parent = track
+	local fillCorner = Instance.new("UICorner")
+	fillCorner.CornerRadius = UDim.new(1, 0)
+	fillCorner.Parent = fill
+	local healthText = Instance.new("TextLabel")
+	healthText.BackgroundTransparency = 1
+	healthText.Position = UDim2.fromOffset(0, 46)
+	healthText.Size = UDim2.new(1, 0, 0, 18)
+	healthText.Font = Enum.Font.GothamMedium
+	healthText.TextSize = 13
+	healthText.TextColor3 = Color3.fromRGB(239, 242, 225)
+	healthText.TextStrokeTransparency = 0.4
+	healthText.Text = tostring(definition.maxHealth) .. " / " .. tostring(definition.maxHealth)
+	healthText.Parent = label
+	local highlight = Instance.new("Highlight")
+	highlight.Name = "CombatSignal"
+	highlight.Adornee = model
+	highlight.DepthMode = Enum.HighlightDepthMode.Occluded
+	highlight.FillTransparency = 0.6
+	highlight.OutlineTransparency = 0.2
+	highlight.Enabled = false
+	highlight.Parent = model
+	local transparencies: { [BasePart]: number } = {}
+	for _, object in model:GetDescendants() do
+		if object:IsA("BasePart") then
+			transparencies[object] = object.Transparency
+		end
+	end
+	return {
+		definition = definition, model = model, root = body, health = definition.maxHealth,
+		maxHealth = definition.maxHealth, alive = true, contributors = {}, participants = {}, participantCount = 0, life = 1,
+		engaged = false, lastNearby = now, pattern = 0, nextSlam = math.huge,
+		respawnAt = nil, slam = nil, transparencies = transparencies,
+		label = label, healthText = healthText, healthFill = fill, highlight = highlight, flashUntil = 0,
+	}
+end
+
+local function healthDisplay(foe: Foe)
+	foe.model:SetAttribute("Health", foe.health)
+	foe.model:SetAttribute("MaxHealth", foe.maxHealth)
+	foe.healthText.Text = tostring(foe.health) .. " / " .. tostring(foe.maxHealth)
+	foe.healthFill.Size = UDim2.fromScale(foe.health / foe.maxHealth, 1)
+end
+
+local function clearSlam(foe: Foe)
+	if foe.slam then
+		foe.slam.disc:Destroy()
+		foe.slam = nil
+	end
+end
+
+local function visible(foe: Foe, enabled: boolean)
+	for object, original in foe.transparencies do
+		object.Transparency = if enabled then original else 1
+		object.CanQuery = enabled
+		object.CanCollide = enabled and object == foe.root
+	end
+	foe.label.Enabled = enabled
+	foe.highlight.Enabled = false
+end
+
+local function lineOfSight(source: Actor, foe: Foe): boolean
+	local parameters = RaycastParams.new()
+	parameters.FilterType = Enum.RaycastFilterType.Exclude
+	parameters.FilterDescendantsInstances = { source.character }
+	local from = source.root.Position
+	local result = Workspace:Raycast(from, foe.root.Position - from, parameters)
+	return result == nil or result.Instance:IsDescendantOf(foe.model)
+end
+
+function CombatService.start(
+	getState: (Player) -> HuntState?, onDefeat: (Player, string) -> (),
+	onBondFx: ((Player, Vector3) -> ())?
+)
+	local destroyed = false
+	local folder = Instance.new("Folder")
+	folder.Name = "WildbondGuardians"
+	folder.Parent = Workspace
+	local foes: { Foe } = {}
+	local lastAttack: { [Player]: number } = {}
+	local lastBond: { [Player]: number } = {}
+	local now = os.clock()
+	for _, definition in Rules.foes do
+		table.insert(foes, buildFoe(folder, definition, now))
+	end
+
+	local function defeat(foe: Foe, at: number)
+		foe.alive = false
+		foe.life += 1
+		foe.respawnAt = at + Rules.respawnDelay
+		clearSlam(foe) -- A killing blow during windup always cancels that slam.
+		foe.model:SetAttribute("Status", "Returning")
+		visible(foe, false)
+		for player, character in foe.contributors do
+			local source = actor(player)
+			if source and source.character == character and Rules.canReward(getState(player), true, player.Parent == Players, true,
+				foe.definition.id, point(source.root.Position), point(foe.root.Position)) then
+				onDefeat(player, foe.definition.id)
+			end
+		end
+		foe.contributors = {}
+		foe.participants = {}
+	end
+
+	local function nearestPlayer(foe: Foe): Actor?
+		local nearest: Actor? = nil
+		local best = Rules.aggroRange * Rules.aggroRange
+		for _, player in Players:GetPlayers() do
+			local source = actor(player)
+			if source and Rules.eligible(getState(player), true, foe.definition.id) then
+				local distance = Rules.distanceSquared(point(source.root.Position), point(foe.root.Position))
+				if distance <= Rules.aggroRange * Rules.aggroRange and lineOfSight(source, foe) then
+					if distance <= best then nearest, best = source, distance end
+				end
+			end
+		end
+		return nearest
+	end
+
+	local function engage(foe: Foe, at: number)
+		if foe.engaged then return end
+		foe.engaged, foe.lastNearby = true, at
+		foe.nextSlam = at + Rules.firstSlamDelay
+	end
+
+	local function reset(foe: Foe, at: number)
+		foe.life += 1
+		foe.alive, foe.engaged = true, false
+		foe.health, foe.maxHealth = foe.definition.maxHealth, foe.definition.maxHealth
+		foe.contributors, foe.respawnAt, foe.flashUntil, foe.pattern = {}, nil, 0, 0
+		foe.participants, foe.participantCount = {}, 0
+		foe.lastNearby, foe.nextSlam = at, math.huge
+		foe.model:SetAttribute("PartySize", 1)
+		clearSlam(foe)
+		foe.model:SetAttribute("Status", "Ready")
+		healthDisplay(foe)
+		visible(foe, true)
+	end
+
+	local function damage(foe: Foe, player: Player, source: Actor, amount: number, at: number)
+		engage(foe, at)
+		if not foe.participants[player] then
+			foe.participants[player] = true
+			foe.participantCount = math.min(foe.participantCount + 1, Rules.maxGroupSize)
+			local maximum = Rules.scaledHealth(foe.definition.maxHealth, foe.participantCount)
+			foe.health += maximum - foe.maxHealth
+			foe.maxHealth = maximum
+			foe.model:SetAttribute("PartySize", foe.participantCount)
+		end
+		foe.contributors[player] = source.character
+		foe.health = math.max(0, foe.health - amount)
+		foe.flashUntil = at + 0.15
+		healthDisplay(foe)
+		if foe.health <= 0 then defeat(foe, at) end
+	end
+
+	local function selectFoe(source: Actor, state: HuntState, radius: number): Foe?
+		local selected: Foe? = nil
+		local best = radius * radius
+		for _, foe in foes do
+			if foe.alive and Rules.eligible(state, true, foe.definition.id) then
+				local distance = Rules.distanceSquared(point(source.root.Position), point(foe.root.Position))
+				if distance <= best and lineOfSight(source, foe) then
+					selected, best = foe, distance
+				end
+			end
+		end
+		return selected
+	end
+
+	local function beginSlam(foe: Foe, target: Actor, at: number)
+		foe.pattern += 1
+		local pattern = Rules.attackPattern(foe.definition, foe.pattern)
+		local burst = pattern.centered
+		local position = if burst then foe.root.Position else target.root.Position
+		local center = Vector3.new(position.X, Rules.groundHeight, position.Z)
+		local radius = pattern.radius
+		local disc = part(folder, "SlamWarning", Vector3.new(0.12, radius * 2, radius * 2),
+			CFrame.new(center) * CFrame.Angles(0, 0, math.rad(90)), Color3.fromRGB(255, 80, 70), Enum.PartType.Cylinder)
+		disc.Material = Enum.Material.Neon
+		disc.Transparency = 0.45
+		disc.CanQuery = false
+		local sign = Instance.new("BillboardGui")
+		sign.Size = UDim2.fromOffset(125, 26)
+		sign.StudsOffsetWorldSpace = Vector3.new(0, 0.6, 0)
+		sign.AlwaysOnTop = true
+		sign.MaxDistance = 65
+		sign.Parent = disc
+		local text = Instance.new("TextLabel")
+		text.Size = UDim2.fromScale(1, 1)
+		text.BackgroundTransparency = 1
+		text.Font = Enum.Font.GothamBold
+		text.TextSize = 16
+		text.TextColor3 = Color3.fromRGB(255, 239, 224)
+		text.TextStrokeTransparency = 0.2
+		text.Text = if burst then "RETREAT!" else "MOVE!"
+		text.Parent = sign
+		foe.slam = { center = center, radius = radius, resolveAt = at + pattern.windup, disc = disc }
+		foe.model:SetAttribute("Status", "Windup")
+	end
+
+	local function update(at: number)
+		if destroyed then
+			return
+		end
+		local players = Players:GetPlayers()
+		for _, foe in foes do
+			if not foe.alive then
+				if foe.respawnAt and at >= foe.respawnAt then
+					reset(foe, at)
+				end
+				continue
+			end
+			local nearest = nearestPlayer(foe)
+			if nearest then
+				engage(foe, at)
+				foe.lastNearby = at
+			elseif foe.engaged and at >= foe.lastNearby + Rules.encounterResetDelay then
+				reset(foe, at)
+			end
+			local slam = foe.slam
+			if slam and at >= slam.resolveAt then
+				for _, player in players do
+					local source = actor(player)
+					if source and Rules.eligible(getState(player), true, foe.definition.id)
+						and Rules.inSlam(point(source.root.Position), point(slam.center), slam.radius) then
+						source.humanoid:TakeDamage(foe.definition.slamDamage)
+					end
+				end
+				clearSlam(foe)
+				foe.nextSlam = at + Rules.slamCooldown
+				foe.model:SetAttribute("Status", "Ready")
+			elseif not slam and at >= foe.nextSlam then
+				if nearest then
+					beginSlam(foe, nearest, at)
+				end
+			end
+			local flashing = at < foe.flashUntil
+			foe.highlight.Enabled = flashing or foe.slam ~= nil
+			if flashing then
+				foe.highlight.FillColor = Color3.fromRGB(255, 246, 221)
+				foe.highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+			elseif foe.slam then
+				foe.highlight.FillColor = Color3.fromRGB(255, 99, 55)
+				foe.highlight.OutlineColor = Color3.fromRGB(255, 170, 75)
+			end
+		end
+	end
+
+	local accumulated = 0
+	local heartbeat = RunService.Heartbeat:Connect(function(delta: number)
+		accumulated += delta
+		if accumulated >= 0.1 then
+			accumulated = 0
+			update(os.clock())
+		end
+	end)
+	local leaving = Players.PlayerRemoving:Connect(function(player: Player)
+		lastAttack[player] = nil
+		lastBond[player] = nil
+		for _, foe in foes do
+			foe.contributors[player] = nil
+		end
+	end)
+
+	local service = {}
+	function service.attack(player: Player): (boolean, string)
+		if destroyed then
+			return false, "Combat is unavailable."
+		end
+		local source = actor(player)
+		if not source then
+			return false, "Wait until your character is ready."
+		end
+		local state = getState(player)
+		if not state or not state.active then
+			return false, "Start an expedition at camp first."
+		end
+		local at = os.clock()
+		if not Rules.cooldownReady(at, lastAttack[player], Rules.meleeCooldown) then
+			return false, "Your next swing is not ready yet."
+		end
+		lastAttack[player] = at
+		local selected = selectFoe(source, state, Rules.meleeRange)
+		if not selected then
+			return false, "Move closer to an unfinished guardian."
+		end
+		damage(selected, player, source, Rules.meleeDamage, at)
+		if selected.health <= 0 then
+			return true, selected.definition.name .. " defeated!"
+		end
+		return true, selected.definition.name .. ": " .. tostring(selected.health) .. " HP"
+	end
+
+	function service.cooldown(player: Player): number
+		local previous = lastBond[player]
+		return if previous then math.max(0, previous + Rules.petCooldown - os.clock()) else 0
+	end
+
+	function service.bond(player: Player): (boolean, string)
+		if destroyed then return false, "Combat is unavailable." end
+		local source, state = actor(player), getState(player)
+		if not source then return false, "Wait until your character is ready." end
+		if not state or not state.active then return false, "Start an expedition at camp first." end
+		if not Rules.canBond(state) then return false, "Equip a companion you own first." end
+		local at = os.clock()
+		if not Rules.cooldownReady(at, lastBond[player], Rules.petCooldown) then
+			return false, "Your companion is catching its breath."
+		end
+		local selected = selectFoe(source, state, Rules.petRange)
+		if not selected then return false, "Move within 18 studs of an unfinished guardian." end
+		lastBond[player] = at
+		engage(selected, at)
+		local life, character, equipped, defeated = selected.life, source.character, state.equipped, state.defeated
+		local equipRevision = state.equipRevision
+		task.delay(Rules.petWindup, function()
+			if destroyed or not selected.alive or selected.life ~= life then return end
+			local current, currentState = actor(player), getState(player)
+			if not current or current.character ~= character or currentState ~= state
+				or currentState.defeated ~= defeated or currentState.equipped ~= equipped or currentState.equipRevision ~= equipRevision
+				or not Rules.canBond(currentState) or not Rules.eligible(currentState, true, selected.definition.id)
+				or not Rules.inRange(point(current.root.Position), point(selected.root.Position), Rules.petRange)
+				or not lineOfSight(current, selected) then return end
+			damage(selected, player, current, Rules.petDamage, os.clock())
+		end)
+		if onBondFx then onBondFx(player, selected.root.Position) end
+		return true, "Companion strike!"
+	end
+
+	function service.destroy()
+		if destroyed then
+			return
+		end
+		destroyed = true
+		heartbeat:Disconnect()
+		leaving:Disconnect()
+		for _, foe in foes do
+			clearSlam(foe)
+			foe.contributors = {}
+			foe.participants = {}
+		end
+		lastAttack = {}
+		lastBond = {}
+		folder:Destroy()
+	end
+
+	return service
+end
+
+return CombatService
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="8">
+        <Properties>
+          <string name="Name">WorldBuilder</string>
+          <string name="Source"><![CDATA[--!strict
+-- The first playable island uses only original, locally generated geometry.
+local Lighting = game:GetService("Lighting")
+
+local WorldBuilder = {}
+
+export type World = {
+	prompts: { [string]: ProximityPrompt },
+	companionSpawn: Vector3,
+}
+
+function WorldBuilder.build(): World
+	local previous = workspace:FindFirstChild("FirstTrailIsland")
+	if previous then
+		previous:Destroy()
+	end
+
+	local world = Instance.new("Model")
+	world.Name = "FirstTrailIsland"
+	world.Parent = workspace
+	local partCount = 0
+	local prompts: { [string]: ProximityPrompt } = {}
+	local palette = {
+		grass = Color3.fromRGB(108, 157, 101),
+		grassLight = Color3.fromRGB(133, 173, 112),
+		earth = Color3.fromRGB(112, 91, 76),
+		stone = Color3.fromRGB(124, 139, 135),
+		stoneLight = Color3.fromRGB(160, 171, 158),
+		path = Color3.fromRGB(196, 173, 125),
+		wood = Color3.fromRGB(110, 77, 57),
+		woodLight = Color3.fromRGB(163, 120, 77),
+		cream = Color3.fromRGB(231, 217, 174),
+		water = Color3.fromRGB(96, 190, 195),
+		leaves = Color3.fromRGB(86, 132, 102),
+		leavesLight = Color3.fromRGB(132, 168, 117),
+		roof = Color3.fromRGB(66, 101, 111),
+	}
+
+	local function part(name: string, size: Vector3, frame: CFrame, color: Color3, material: Enum.Material?): Part
+		local result = Instance.new("Part")
+		result.Name = name
+		result.Size = size
+		result.CFrame = frame
+		result.Color = color
+		result.Material = material or Enum.Material.SmoothPlastic
+		result.Anchored = true
+		result.TopSurface = Enum.SurfaceType.Smooth
+		result.BottomSurface = Enum.SurfaceType.Smooth
+		result.Parent = world
+		partCount += 1
+		return result
+	end
+
+	local function label(adornee: BasePart, text: string, color: Color3?)
+		local gui = Instance.new("BillboardGui")
+		gui.Name = "LandmarkLabel"
+		gui.Size = UDim2.fromOffset(210, 44)
+		gui.StudsOffset = Vector3.new(0, 3.2, 0)
+		gui.MaxDistance = 65
+		gui.AlwaysOnTop = false
+		gui.Parent = adornee
+		local textLabel = Instance.new("TextLabel")
+		textLabel.Size = UDim2.fromScale(1, 1)
+		textLabel.BackgroundTransparency = 1
+		textLabel.Font = Enum.Font.GothamMedium
+		textLabel.TextSize = 19
+		textLabel.TextColor3 = color or palette.cream
+		textLabel.TextStrokeColor3 = Color3.fromRGB(44, 57, 52)
+		textLabel.TextStrokeTransparency = 0.25
+		textLabel.Text = text
+		textLabel.Parent = gui
+	end
+
+	local function interaction(id: string, landmark: BasePart, action: string, object: string)
+		landmark:SetAttribute("InteractionId", id)
+		landmark:SetAttribute("InteractionRadius", 14)
+		local prompt = Instance.new("ProximityPrompt")
+		prompt.Name = id .. "Prompt"
+		prompt.ActionText = action
+		prompt.ObjectText = object
+		prompt.KeyboardKeyCode = Enum.KeyCode.E
+		prompt.GamepadKeyCode = Enum.KeyCode.ButtonX
+		prompt.HoldDuration = 0.35
+		prompt.MaxActivationDistance = 14
+		prompt.RequiresLineOfSight = false
+		prompt.Exclusivity = Enum.ProximityPromptExclusivity.OneGlobally
+		prompt.Parent = landmark
+		prompts[id] = prompt
+	end
+
+	local function distanceToSegment(point: Vector3, a: Vector3, b: Vector3): number
+		local line = b - a
+		local along = math.clamp((point - a):Dot(line) / line:Dot(line), 0, 1)
+		return (point - (a + line * along)).Magnitude
+	end
+
+	local function path(a: Vector3, b: Vector3, width: number)
+		local delta = b - a
+		local middle = (a + b) / 2
+		part("Trail", Vector3.new(width, 0.12, delta.Magnitude + 1), CFrame.lookAt(middle, b), palette.path, Enum.Material.Sand)
+	end
+
+	-- All expedition routes share a flat surface; cliffs are scenery.
+	local sea = part("Sea", Vector3.new(1600, 2, 1600), CFrame.new(0, -7, 0), Color3.fromRGB(75, 145, 173))
+	sea.Material = Enum.Material.SmoothPlastic
+	sea.CanCollide = false
+	part("IslandEarth", Vector3.new(166, 12, 204), CFrame.new(8, -4, -29), palette.earth, Enum.Material.Rock)
+	part("IslandMeadow", Vector3.new(166, 4, 204), CFrame.new(8, 2, -29), palette.grass, Enum.Material.Grass)
+	part("WestCoast", Vector3.new(27, 4, 113), CFrame.new(-79, 2, -33) * CFrame.Angles(0, math.rad(8), 0), palette.grass, Enum.Material.Grass)
+	part("SouthBeach", Vector3.new(128, 4, 19), CFrame.new(9, 1.5, 79), palette.path, Enum.Material.Sand)
+	part("EasternShore", Vector3.new(18, 4, 159), CFrame.new(96, 1.6, -24) * CFrame.Angles(0, math.rad(-5), 0), palette.path, Enum.Material.Sand)
+
+	local trailPoints = {
+		Vector3.new(0, 4.07, 35),
+		Vector3.new(0, 4.07, 15),
+		Vector3.new(-45, 4.07, -25),
+		Vector3.new(0, 4.07, -65),
+		Vector3.new(65, 4.07, -80),
+		Vector3.new(63, 4.07, -18),
+		Vector3.new(35, 4.07, 35),
+		Vector3.new(0, 4.07, 35),
+	}
+	for index = 1, #trailPoints - 1 do
+		path(trailPoints[index], trailPoints[index + 1], 10)
+	end
+	path(Vector3.new(-23, 4.07, 27), Vector3.new(0, 4.07, 15), 7)
+	path(Vector3.new(12, 4.07, 15), Vector3.new(0, 4.07, 15), 7)
+
+	-- The tavern has an actual doorway, a warm interior, and a readable silhouette.
+	local tavernX, tavernZ = -24, 38
+	part("TavernFloor", Vector3.new(21, 0.3, 19), CFrame.new(tavernX, 4.2, tavernZ), palette.woodLight, Enum.Material.WoodPlanks)
+	part("TavernBackWall", Vector3.new(21, 8, 0.8), CFrame.new(tavernX, 8.4, tavernZ + 9), palette.cream)
+	for _, side in { -1, 1 } do
+		part("TavernSideWall", Vector3.new(0.8, 8, 18), CFrame.new(tavernX + side * 10, 8.4, tavernZ), palette.cream)
+		part("DoorwayWall", Vector3.new(7.5, 8, 0.8), CFrame.new(tavernX + side * 6.4, 8.4, tavernZ - 9), palette.cream)
+		part("RoofSlope", Vector3.new(12.2, 0.65, 22), CFrame.new(tavernX + side * 5.4, 14.2, tavernZ) * CFrame.Angles(0, 0, math.rad(-side * 23)), palette.roof)
+		for _, endZ in { -9, 9 } do
+			part("TavernPost", Vector3.new(1.1, 8.6, 1.1), CFrame.new(tavernX + side * 10, 8.4, tavernZ + endZ), palette.wood, Enum.Material.Wood)
+		end
+		part("WindowFrame", Vector3.new(4.1, 3.5, 0.25), CFrame.new(tavernX + side * 6.4, 9, tavernZ - 9.5), palette.wood)
+		local window = part("WarmWindow", Vector3.new(3.2, 2.6, 0.15), CFrame.new(tavernX + side * 6.4, 9, tavernZ - 9.67), Color3.fromRGB(248, 202, 129), Enum.Material.Neon)
+		window.CanCollide = false
+		part("WindowCrossbar", Vector3.new(0.18, 2.7, 0.17), CFrame.new(tavernX + side * 6.4, 9, tavernZ - 9.8), palette.wood)
+	end
+	part("TavernDoorLintel", Vector3.new(5.5, 2.3, 1), CFrame.new(tavernX, 11.3, tavernZ - 9), palette.wood)
+	part("TavernRoofRidge", Vector3.new(0.9, 0.9, 22.8), CFrame.new(tavernX, 16.6, tavernZ), palette.wood)
+	part("Chimney", Vector3.new(2.6, 8.5, 2.5), CFrame.new(tavernX - 6, 14, tavernZ + 3), palette.stone, Enum.Material.Slate)
+	part("TavernFrontBeam", Vector3.new(21, 0.6, 0.9), CFrame.new(tavernX, 12, tavernZ - 9.15), palette.wood)
+	for _, side in { -1, 1 } do
+		part("TavernFootBeam", Vector3.new(7.5, 0.6, 0.9), CFrame.new(tavernX + side * 6.4, 5, tavernZ - 9.15), palette.wood)
+	end
+	part("TavernTable", Vector3.new(5, 0.5, 3), CFrame.new(tavernX, 6.5, tavernZ + 2), palette.woodLight, Enum.Material.Wood)
+	part("TablePedestal", Vector3.new(1, 2, 1), CFrame.new(tavernX, 5.3, tavernZ + 2), palette.wood)
+	for _, side in { -1, 1 } do
+		part("TavernBench", Vector3.new(5, 0.6, 1), CFrame.new(tavernX, 5.2, tavernZ + 2 + side * 2.3), palette.woodLight)
+	end
+	local tavernSign = part("TavernSign", Vector3.new(5.5, 1.7, 0.4), CFrame.new(tavernX, 10.8, tavernZ - 9.8), palette.wood)
+	label(tavernSign, "THE WAYFARER", palette.cream)
+
+	local spawn = Instance.new("SpawnLocation")
+	spawn.Name = "VillageSpawn"
+	spawn.Size = Vector3.new(7, 1, 7)
+	spawn.Position = Vector3.new(0, 4.5, 35)
+	spawn.Anchored = true
+	spawn.Neutral = true
+	spawn.Duration = 0
+	spawn.Transparency = 1
+	spawn.CanCollide = false
+	spawn.Parent = world
+	partCount += 1
+
+	for _, side in { -1, 1 } do
+		part("HuntBoardPost", Vector3.new(0.6, 5, 0.6), CFrame.new(side * 2.9, 6.5, 15.4), palette.wood)
+	end
+	local board = part("HuntBoard", Vector3.new(6.7, 3.3, 0.55), CFrame.new(0, 7.2, 15), palette.woodLight, Enum.Material.Wood)
+	part("BoardParchment", Vector3.new(5.5, 2.3, 0.1), CFrame.new(0, 7.2, 15.32), palette.cream)
+	label(board, "EXPEDITION BOARD")
+	interaction("start", board, "Begin hunt", "Expedition board")
+	local rewardChest = part("HuntRewardChest", Vector3.new(3.5, 2.1, 2.4), CFrame.new(12, 5.1, 15), palette.woodLight, Enum.Material.Wood)
+	part("ChestLid", Vector3.new(3.7, 0.5, 2.6), CFrame.new(12, 6.35, 15), palette.wood)
+	for _, side in { -1, 1 } do
+		part("ChestBand", Vector3.new(0.24, 2.6, 2.7), CFrame.new(12 + side * 1, 5.4, 15), palette.cream, Enum.Material.Metal)
+	end
+	label(rewardChest, "HUNT REWARDS")
+	interaction("return", rewardChest, "Claim reward", "Village reward chest")
+
+	-- Camp details establish a handmade scale without purchased assets.
+	part("CampAwning", Vector3.new(11, 0.4, 8), CFrame.new(23, 10, 29) * CFrame.Angles(0, 0, math.rad(-6)), Color3.fromRGB(175, 110, 92), Enum.Material.Fabric)
+	for _, x in { 18, 28 } do
+		for _, z in { 25.5, 32.5 } do
+			part("CampPole", Vector3.new(0.35, 6, 0.35), CFrame.new(x, 7, z), palette.wood)
+		end
+	end
+	part("ApothecaryTable", Vector3.new(8, 0.5, 2.6), CFrame.new(23, 6.3, 30), palette.woodLight)
+	for _, x in { 20, 26 } do
+		part("CampTableLeg", Vector3.new(0.5, 2.2, 0.5), CFrame.new(x, 5.15, 30), palette.wood)
+	end
+	for index, color in { Color3.fromRGB(113, 205, 198), Color3.fromRGB(190, 153, 211), Color3.fromRGB(234, 181, 99) } do
+		local bottle = part("PotionBottle", Vector3.new(0.75, 1.2, 0.75), CFrame.new(19.9 + index * 1.3, 7.15, 30), color, Enum.Material.Glass)
+		bottle.Transparency = 0.2
+		part("PotionStopper", Vector3.new(0.4, 0.3, 0.4), CFrame.new(19.9 + index * 1.3, 7.85, 30), palette.path)
+	end
+	part("CampCrate", Vector3.new(2.4, 2.4, 2.4), CFrame.new(31, 5.2, 30), palette.woodLight, Enum.Material.WoodPlanks)
+	for _, x in { -7, 10, 34 } do
+		part("VillageLanternPost", Vector3.new(0.45, 6, 0.45), CFrame.new(x, 7, 39), palette.wood)
+		local lantern = part("VillageLantern", Vector3.new(0.9, 1.3, 0.9), CFrame.new(x, 10.25, 39), Color3.fromRGB(248, 206, 134), Enum.Material.Neon)
+		local light = Instance.new("PointLight")
+		light.Color = lantern.Color
+		light.Brightness = 0.65
+		light.Range = 13
+		light.Parent = lantern
+	end
+
+	-- Broad clearings accommodate the three server-controlled encounters.
+	local stops = {
+		{ id = "moss", name = "MossdenBounty", title = "MOSSDEN", position = Vector3.new(-45, 5.7, -25), color = Color3.fromRGB(155, 205, 124) },
+		{ id = "river", name = "RiverwatchBounty", title = "RIVERWATCH", position = Vector3.new(0, 5.7, -65), color = Color3.fromRGB(125, 212, 218) },
+		{ id = "ruins", name = "RuinheartBounty", title = "RUINHEART", position = Vector3.new(65, 5.7, -80), color = Color3.fromRGB(187, 166, 225) },
+	}
+	for _, stop in stops do
+		part("BountyPlinth", Vector3.new(4.5, 0.6, 4.5), CFrame.new(stop.position.X, 4.3, stop.position.Z), palette.stone)
+		local landmark = part(stop.name, Vector3.new(1.8, 2.7, 1.8), CFrame.new(stop.position), palette.stoneLight, Enum.Material.Slate)
+		local gem = part("BountyBeacon", Vector3.new(0.95, 0.95, 0.95), CFrame.new(stop.position + Vector3.new(0, 1.9, 0)) * CFrame.Angles(0, math.rad(45), math.rad(25)), stop.color, Enum.Material.Neon)
+		gem.CanCollide = false
+		label(landmark, stop.title, stop.color)
+		interaction(stop.id, landmark, "Collect bounty", stop.title)
+	end
+
+	-- Terraced silhouettes stay behind the playable ground.
+	for index, cliffZ in { 40, 4, -35, -78, -113 } do
+		local height = 14 + index * 2
+		part("WesternCliff", Vector3.new(23, height, 31), CFrame.new(-88, 4 + height / 2, cliffZ), palette.earth, Enum.Material.Rock)
+		part("CliffMeadow", Vector3.new(24, 1.4, 32), CFrame.new(-88, 4 + height + 0.4, cliffZ), palette.grassLight, Enum.Material.Grass)
+	end
+	for index = 1, 5 do
+		local cliffX = -54 + (index - 1) * 33
+		local height = if index == 3 then 24 else 15 + index % 3 * 3
+		part("NorthernCliff", Vector3.new(31, height, 17), CFrame.new(cliffX, 4 + height / 2, -125), palette.earth, Enum.Material.Rock)
+		part("NorthernGrass", Vector3.new(32, 1, 18), CFrame.new(cliffX, 4 + height + 0.3, -125), palette.grassLight, Enum.Material.Grass)
+	end
+	part("WaterfallShelf", Vector3.new(23, 20, 10), CFrame.new(-9, 14, -109), palette.stone, Enum.Material.Rock)
+	part("WaterfallShelfGrass", Vector3.new(24, 1, 11), CFrame.new(-9, 24.3, -109), palette.grassLight)
+	local waterfall = part("Waterfall", Vector3.new(11, 20, 0.65), CFrame.new(-9, 14.2, -103.6), palette.water, Enum.Material.Glass)
+	waterfall.Transparency = 0.22
+	waterfall.CanCollide = false
+	for _, x in { -12, -8, -5 } do
+		local foam = part("WaterfallFoam", Vector3.new(0.4, 19, 0.1), CFrame.new(x, 14.3, -103.2), Color3.fromRGB(198, 238, 224), Enum.Material.Neon)
+		foam.Transparency = 0.5
+		foam.CanCollide = false
+	end
+	local pool = part("ShallowRiverPool", Vector3.new(36, 0.16, 17), CFrame.new(-9, 4.12, -94), palette.water, Enum.Material.Glass)
+	pool.Transparency = 0.22
+	pool.CanCollide = false
+	part("RiversideFootbridge", Vector3.new(22, 0.4, 4), CFrame.new(-9, 4.5, -88), palette.woodLight, Enum.Material.WoodPlanks)
+	for _, z in { -90, -86 } do
+		part("BridgeHandrail", Vector3.new(22, 0.35, 0.35), CFrame.new(-9, 6.5, z), palette.wood)
+		for _, x in { -19, -9, 1 } do
+			part("BridgePost", Vector3.new(0.4, 2.2, 0.4), CFrame.new(x, 5.55, z), palette.wood)
+		end
+	end
+
+	-- The broken ring leaves a western approach and a broad southern exit.
+	for index = 0, 9 do
+		local angle = math.rad(index * 30 + 15)
+		local radius = 25
+		local x = 65 + math.cos(angle) * radius
+		local z = -80 + math.sin(angle) * radius
+		local approachDistance = distanceToSegment(Vector3.new(x, 4.07, z), trailPoints[4], trailPoints[5])
+		if z < -65 and approachDistance > 8 then
+			local height = 5 + index % 3 * 2
+			part("RuinColumn", Vector3.new(2.3, height, 2.3), CFrame.new(x, 4 + height / 2, z) * CFrame.Angles(0, angle, 0), palette.stoneLight, Enum.Material.Slate)
+			part("RuinColumnCapital", Vector3.new(3.2, 0.75, 3.2), CFrame.new(x, 4 + height, z) * CFrame.Angles(0, angle, 0), palette.stone)
+		end
+	end
+	for index = 1, 7 do
+		local angle = math.rad(index * 40)
+		part("RuinBorderStone", Vector3.new(4, 0.3, 2.5), CFrame.new(65 + math.cos(angle) * 23, 4.12, -80 + math.sin(angle) * 23) * CFrame.Angles(0, -angle, 0), palette.stoneLight)
+	end
+
+	local function tree(x: number, z: number, scale: number, pine: boolean)
+		local trunkHeight = 4.8 * scale
+		part("TreeTrunk", Vector3.new(1.1 * scale, trunkHeight, 1.1 * scale), CFrame.new(x, 4 + trunkHeight / 2, z), palette.wood, Enum.Material.Wood)
+		if pine then
+			for tier = 0, 2 do
+				local size = (6.7 - tier * 1.5) * scale
+				part("PineCrown", Vector3.new(size, 2.7 * scale, size), CFrame.new(x, 7.5 * scale + 2 + tier * 1.7 * scale, z) * CFrame.Angles(0, math.rad(45), 0), if tier % 2 == 0 then palette.leaves else palette.leavesLight)
+			end
+		else
+			part("TreeCrown", Vector3.new(7.5 * scale, 6 * scale, 7.2 * scale), CFrame.new(x, 4 + trunkHeight + 1.7 * scale, z) * CFrame.Angles(math.rad(8), math.rad(35), math.rad(7)), palette.leaves)
+			part("TreeCrownLight", Vector3.new(5.7 * scale, 4.5 * scale, 5.9 * scale), CFrame.new(x - scale, 4 + trunkHeight + 3 * scale, z - scale) * CFrame.Angles(0, math.rad(-15), math.rad(-12)), palette.leavesLight)
+		end
+	end
+
+	local function clearForScenery(x: number, z: number): boolean
+		local point = Vector3.new(x, 4.07, z)
+		if (point - Vector3.new(-24, 4.07, 38)).Magnitude < 22 or (point - Vector3.new(20, 4.07, 27)).Magnitude < 20 then
+			return false
+		end
+		for _, stop in stops do
+			local encounter = Vector3.new(stop.position.X, 4.07, stop.position.Z + 8)
+			if (point - encounter).Magnitude < (if stop.id == "ruins" then 28 else 23) then
+				return false
+			end
+		end
+		if x > -32 and x < 13 and z < -84 then
+			return false
+		end
+		for index = 1, #trailPoints - 1 do
+			if distanceToSegment(point, trailPoints[index], trailPoints[index + 1]) < 9 then
+				return false
+			end
+		end
+		return true
+	end
+
+	local random = Random.new(52719)
+	local trees = 0
+	for _ = 1, 150 do
+		if trees >= 30 then
+			break
+		end
+		local x, z = random:NextNumber(-68, 82), random:NextNumber(-113, 62)
+		if clearForScenery(x, z) then
+			tree(x, z, random:NextNumber(0.7, 1.1), z < -45)
+			trees += 1
+		end
+	end
+	for index = 1, 26 do
+		local x, z = random:NextNumber(-68, 86), random:NextNumber(-113, 62)
+		if clearForScenery(x, z) then
+			local rockSize = random:NextNumber(1.2, 2.8)
+			part("MeadowRock", Vector3.new(rockSize * 1.3, rockSize, rockSize), CFrame.new(x, 4 + rockSize * 0.35, z) * CFrame.Angles(math.rad(15), random:NextNumber(0, math.pi), math.rad(20)), palette.stone)
+			if index % 2 == 0 then
+				part("RockMoss", Vector3.new(rockSize, 0.4, rockSize * 0.8), CFrame.new(x, 4 + rockSize * 0.7, z), palette.grassLight)
+			end
+		end
+	end
+	for _ = 1, 22 do
+		local x, z = random:NextNumber(-60, 78), random:NextNumber(-105, 58)
+		if clearForScenery(x, z) then
+			for flowerIndex = 1, 3 do
+				local offset = Vector3.new((flowerIndex - 2) * 0.5, 0, flowerIndex % 2 * 0.6)
+				part("MeadowFlower", Vector3.new(0.55, 0.3, 0.55), CFrame.new(Vector3.new(x, 4.3, z) + offset) * CFrame.Angles(0, math.rad(45), 0), if flowerIndex == 2 then Color3.fromRGB(237, 205, 141) else Color3.fromRGB(218, 183, 195))
+			end
+		end
+	end
+
+	Lighting.ClockTime = 14.5
+	Lighting.Brightness = 2.2
+	Lighting.GlobalShadows = true
+	Lighting.Ambient = Color3.fromRGB(113, 132, 143)
+	Lighting.OutdoorAmbient = Color3.fromRGB(141, 159, 168)
+	Lighting.EnvironmentDiffuseScale = 0.65
+	Lighting.EnvironmentSpecularScale = 0.4
+	Lighting.FogStart = 200
+	Lighting.FogEnd = 950
+	Lighting.FogColor = Color3.fromRGB(185, 214, 221)
+	for _, effectName in { "FirstTrailAtmosphere", "FirstTrailColor", "FirstTrailBloom" } do
+		local oldEffect = Lighting:FindFirstChild(effectName)
+		if oldEffect then
+			oldEffect:Destroy()
+		end
+	end
+	local atmosphere = Instance.new("Atmosphere")
+	atmosphere.Name = "FirstTrailAtmosphere"
+	atmosphere.Density = 0.22
+	atmosphere.Offset = 0.05
+	atmosphere.Color = Color3.fromRGB(201, 225, 233)
+	atmosphere.Decay = Color3.fromRGB(122, 148, 159)
+	atmosphere.Glare = 0.1
+	atmosphere.Haze = 0.9
+	atmosphere.Parent = Lighting
+	local color = Instance.new("ColorCorrectionEffect")
+	color.Name = "FirstTrailColor"
+	color.Contrast = 0.035
+	color.Saturation = 0.045
+	color.TintColor = Color3.fromRGB(255, 248, 236)
+	color.Parent = Lighting
+	local bloom = Instance.new("BloomEffect")
+	bloom.Name = "FirstTrailBloom"
+	bloom.Intensity = 0.12
+	bloom.Size = 20
+	bloom.Threshold = 1.8
+	bloom.Parent = Lighting
+	world:SetAttribute("GeneratedPartCount", partCount)
+	world:SetAttribute("PrototypeGeometry", true)
+
+	return {
+		prompts = prompts,
+		companionSpawn = Vector3.new(3, 5.1, 38),
+	}
+end
+
+return WorldBuilder
+]]></string>
+        </Properties>
+      </Item>
+    </Item>
+  </Item>
+  <Item class="SoundService" referent="9">
+    <Properties>
+      <string name="Name">SoundService</string>
+      <bool name="RespectFilteringEnabled">true</bool>
+    </Properties>
+  </Item>
+  <Item class="StarterPlayer" referent="10">
+    <Properties>
+      <string name="Name">StarterPlayer</string>
+      <float name="CharacterJumpHeight">7.2</float>
+      <float name="CharacterWalkSpeed">20</float>
+    </Properties>
+    <Item class="StarterCharacterScripts" referent="11">
+      <Properties>
+        <string name="Name">StarterCharacterScripts</string>
+      </Properties>
+      <Item class="Script" referent="12">
+        <Properties>
+          <string name="Name">Health</string>
+          <token name="RunContext">0</token>
+          <string name="Source"><![CDATA[-- Disable Roblox's default passive regeneration. Hunts start with full health;
+-- completing a hunt or respawning restores it. Damage matters during combat.
+]]></string>
+        </Properties>
+      </Item>
+    </Item>
+    <Item class="StarterPlayerScripts" referent="13">
+      <Properties>
+        <string name="Name">StarterPlayerScripts</string>
+      </Properties>
+      <Item class="LocalScript" referent="14">
+        <Properties>
+          <string name="Name">WildbondClient</string>
+          <string name="Source"><![CDATA[--!nonstrict
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local shared = ReplicatedStorage:WaitForChild("Wildbond")
+local Expedition = require(shared:WaitForChild("Expedition"))
+local CombatRules = require(shared:WaitForChild("CombatRules"))
+local Hud = require(script:WaitForChild("Hud"))
+local CompanionView = require(script:WaitForChild("CompanionView"))
+local remotes = shared:WaitForChild("Remotes")
+local command = remotes:WaitForChild("Command")
+local update = remotes:WaitForChild("Update")
+local effect = remotes:WaitForChild("Effect")
+
+local hud = Hud.start(command, Expedition.pets, CombatRules)
+local stopCompanion, animateBond = CompanionView.start(Players.LocalPlayer)
+local connection = update.OnClientEvent:Connect(function(state, message, success)
+	hud:render(state, message, success)
+end)
+local effectConnection = effect.OnClientEvent:Connect(function(kind, position)
+	if kind == "bond" and typeof(position) == "Vector3" then
+		animateBond(position)
+		hud:bondAccepted(CombatRules.petCooldown)
+	end
+end)
+command:FireServer("sync")
+
+script.Destroying:Connect(function()
+	connection:Disconnect()
+	effectConnection:Disconnect()
+	stopCompanion()
+	hud:destroy()
+end)
+]]></string>
+        </Properties>
+        <Item class="ModuleScript" referent="15">
+          <Properties>
+            <string name="Name">CompanionView</string>
+            <string name="Source"><![CDATA[--!strict
+-- A local visual companion; rewards and ownership are always server concerns.
+local RunService = game:GetService("RunService")
+
+local CompanionView = {}
+
+type Piece = {
+	part: BasePart,
+	offset: CFrame,
+	legPhase: number?,
+}
+
+function CompanionView.start(player: Player): (() -> (), (Vector3) -> ())
+	local model = Instance.new("Model")
+	model.Name = "LocalTrailCompanion"
+	model:SetAttribute("CosmeticOnly", true)
+	model.Parent = workspace
+	local pieces: { Piece } = {}
+	local bodyHeight = 1.1
+	local strike: { origin: CFrame, target: CFrame, elapsed: number }? = nil
+
+	local function piece(name: string, size: Vector3, offset: CFrame, color: Color3, legPhase: number?, wedge: boolean?): BasePart
+		local bodyPart = (if wedge then Instance.new("WedgePart") else Instance.new("Part")) :: BasePart
+		bodyPart.Name = name
+		bodyPart.Size = size
+		bodyPart.Color = color
+		bodyPart.Material = Enum.Material.SmoothPlastic
+		bodyPart.Anchored = true
+		bodyPart.CanCollide = false
+		bodyPart.CanTouch = false
+		bodyPart.CanQuery = false
+		bodyPart.Parent = model
+		table.insert(pieces, { part = bodyPart, offset = offset, legPhase = legPhase })
+		return bodyPart
+	end
+
+	local function buildCompanion()
+		strike = nil
+		model:ClearAllChildren()
+		table.clear(pieces)
+		local selected = player:GetAttribute("CompanionId")
+		local isFox = selected == "emberfox"
+		local isCub = selected == "tidecub"
+		local fur = if isFox then Color3.fromRGB(196, 115, 67) elseif isCub then Color3.fromRGB(129, 180, 197) else Color3.fromRGB(222, 230, 220)
+		local shadowFur = if isFox then Color3.fromRGB(89, 70, 65) elseif isCub then Color3.fromRGB(104, 146, 169) else Color3.fromRGB(176, 192, 189)
+		local accent = if isFox then Color3.fromRGB(239, 205, 133) elseif isCub then Color3.fromRGB(178, 210, 221) else Color3.fromRGB(139, 174, 116)
+		bodyHeight = if isCub then 0.95 else 1.1
+		model:SetAttribute("CompanionId", if isFox then "emberfox" elseif isCub then "tidecub" else "mosswolf")
+		local body = piece("Body", if isCub then Vector3.new(1.5, 1.1, 1.6) else Vector3.new(1.25, 0.95, 2), CFrame.identity, fur)
+		model.PrimaryPart = body
+		piece("ChestRuff", if isCub then Vector3.new(1.4, 1.05, 0.7) else Vector3.new(1.4, 1.12, 0.8), CFrame.new(0, 0.1, -0.7) * CFrame.Angles(math.rad(-8), 0, 0), if isFox then Color3.fromRGB(238, 219, 177) else fur)
+		piece("Head", if isCub then Vector3.new(1.2, 0.95, 0.9) else Vector3.new(0.95, 0.85, 0.95), CFrame.new(0, 0.45, -1.25), fur)
+		piece("Muzzle", if isCub then Vector3.new(0.72, 0.4, 0.4) else Vector3.new(0.65, 0.4, 0.65), CFrame.new(0, 0.2, if isCub then -1.78 else -1.92), if isFox then Color3.fromRGB(238, 219, 177) else shadowFur)
+		piece("Nose", Vector3.new(0.25, 0.2, 0.16), CFrame.new(0, 0.3, if isCub then -2.02 else -2.29), Color3.fromRGB(43, 54, 57))
+		for _, side in { -1, 1 } do
+			local ear = piece("Ear", if isFox then Vector3.new(0.45, 0.95, 0.42) elseif isCub then Vector3.new(0.46, 0.46, 0.4) else Vector3.new(0.32, 0.68, 0.4), CFrame.new(side * (if isCub then 0.5 else 0.34), if isFox then 1.15 else 1.05, -1.15) * CFrame.Angles(0, 0, math.rad(-side * 12)), shadowFur, nil, not isCub)
+			if isCub and ear:IsA("Part") then
+				ear.Shape = Enum.PartType.Ball
+			end
+			piece("Eye", Vector3.new(0.08, 0.13, 0.17), CFrame.new(side * (if isCub then 0.61 else 0.48), 0.53, -1.56), Color3.fromRGB(47, 72, 83))
+			for _, endZ in { -0.63, 0.7 } do
+				local phase = if (side == -1 and endZ < 0) or (side == 1 and endZ > 0) then 0 else math.pi
+				piece("Leg", if isCub then Vector3.new(0.43, 0.52, 0.45) else Vector3.new(0.32, 0.69, 0.38), CFrame.new(side * (if isCub then 0.53 else 0.46), if isCub then -0.6 else -0.68, endZ), shadowFur, phase)
+			end
+		end
+		piece("Tail", if isFox then Vector3.new(0.68, 0.65, 1.6) elseif isCub then Vector3.new(0.48, 0.45, 0.5) else Vector3.new(0.4, 0.42, 1.22), CFrame.new(0, 0.15, if isCub then 1 else 1.37) * CFrame.Angles(math.rad(-23), 0, 0), fur)
+		if isFox then
+			piece("FoxTailTip", Vector3.new(0.7, 0.67, 0.5), CFrame.new(0, 0.45, 2.08) * CFrame.Angles(math.rad(-23), 0, 0), Color3.fromRGB(238, 219, 177))
+		end
+		piece("TrailScarf", Vector3.new(1.43, 0.26, 0.33), CFrame.new(0, 0.3, -0.9), accent)
+		piece("ScarfKnot", Vector3.new(0.25, 0.6, 0.25), CFrame.new(0.64, 0.02, -0.97) * CFrame.Angles(0, 0, math.rad(-15)), accent)
+	end
+	buildCompanion()
+
+	local character = player.Character
+	local raycastParameters = RaycastParams.new()
+	raycastParameters.FilterType = Enum.RaycastFilterType.Exclude
+	local function setCharacter(newCharacter: Model)
+		strike = nil
+		character = newCharacter
+		raycastParameters.FilterDescendantsInstances = { model, newCharacter }
+	end
+	if character then
+		setCharacter(character)
+	else
+		raycastParameters.FilterDescendantsInstances = { model }
+	end
+
+	local currentFrame: CFrame? = nil
+	local floorY = 4
+	local floorTimer = 0
+	local elapsed = 0
+	local stopped = false
+	local companionConnection = player:GetAttributeChangedSignal("CompanionId"):Connect(buildCompanion)
+	local addedConnection = player.CharacterAdded:Connect(function(newCharacter: Model)
+		setCharacter(newCharacter)
+		currentFrame = nil
+		floorTimer = 0
+	end)
+	local removedConnection = player.CharacterRemoving:Connect(function(oldCharacter: Model)
+		if character == oldCharacter then
+			strike = nil
+			character = nil
+			currentFrame = nil
+			model.Parent = nil
+		end
+	end)
+
+	local renderConnection = RunService.RenderStepped:Connect(function(dt: number)
+		local activeCharacter = character
+		if stopped or not activeCharacter then
+			return
+		end
+		local root = activeCharacter:FindFirstChild("HumanoidRootPart")
+		if not root or not root:IsA("BasePart") then
+			return
+		end
+		if not model.Parent then
+			model.Parent = workspace
+		end
+		local desired = (root.CFrame * CFrame.new(3.2, 0, 3.6)).Position
+		floorTimer -= dt
+		if floorTimer <= 0 then
+			floorTimer = 0.12
+			local ground = workspace:Raycast(desired + Vector3.new(0, 6, 0), Vector3.new(0, -32, 0), raycastParameters)
+			floorY = if ground then ground.Position.Y else root.Position.Y - 3
+		end
+		local target = Vector3.new(desired.X, floorY + bodyHeight, desired.Z)
+		local oldFrame = currentFrame
+		if not oldFrame or (oldFrame.Position - target).Magnitude > 40 then
+			local forward = root.CFrame.LookVector * Vector3.new(1, 0, 1)
+			if forward.Magnitude < 0.01 then
+				forward = Vector3.new(0, 0, -1)
+			end
+			oldFrame = CFrame.lookAt(target, target + forward)
+		end
+		local alpha = 1 - math.exp(-math.min(dt, 0.1) * 8)
+		local newPosition = oldFrame.Position:Lerp(target, alpha)
+		local movement = (newPosition - oldFrame.Position) * Vector3.new(1, 0, 1)
+		local direction = if movement.Magnitude > 0.025 then movement.Unit else root.CFrame.LookVector * Vector3.new(1, 0, 1)
+		if direction.Magnitude < 0.01 then
+			direction = Vector3.new(0, 0, -1)
+		end
+		local heading = oldFrame:Lerp(CFrame.lookAt(newPosition, newPosition + direction), alpha)
+		local newFrame = CFrame.new(newPosition) * heading.Rotation
+		local activeStrike = strike
+		if activeStrike then
+			activeStrike.elapsed += math.min(dt, 0.1)
+			local time = activeStrike.elapsed
+			if time < 0.2 then
+				local progress = time / 0.2
+				local approach = activeStrike.origin:Lerp(activeStrike.target, progress)
+				newFrame = approach + Vector3.new(0, math.sin(progress * math.pi) * 1.1, 0)
+			elseif time < 0.3 then
+				newFrame = activeStrike.target
+			elseif time < 0.45 then
+				-- Return toward the live character, even if they moved during the pounce.
+				local returnFrame = CFrame.lookAt(target, target + direction)
+				newFrame = activeStrike.target:Lerp(returnFrame, (time - 0.3) / 0.15)
+			else
+				strike = nil
+				newFrame = CFrame.lookAt(target, target + direction)
+			end
+		end
+		currentFrame = newFrame
+		local speed = movement.Magnitude / math.max(dt, 0.001)
+		local gaitAmount = math.clamp(speed / 12, 0, 1)
+		elapsed += math.min(dt, 0.1) * (8 + math.min(speed, 12))
+		for _, wolfPiece in pieces do
+			local offset = wolfPiece.offset
+			local phase = wolfPiece.legPhase
+			if phase then
+				local stride = math.sin(elapsed + phase) * 0.18 * gaitAmount
+				local lift = math.max(0, math.cos(elapsed + phase)) * 0.13 * gaitAmount
+				offset *= CFrame.new(0, lift, stride) * CFrame.Angles(stride * 2, 0, 0)
+			end
+			wolfPiece.part.CFrame = newFrame * offset
+		end
+	end)
+
+	local function strikeAt(targetPosition: Vector3)
+		if stopped or not character or not currentFrame or typeof(targetPosition) ~= "Vector3" then return end
+		if targetPosition.X ~= targetPosition.X or targetPosition.Y ~= targetPosition.Y or targetPosition.Z ~= targetPosition.Z
+			or math.abs(targetPosition.X) == math.huge or math.abs(targetPosition.Y) == math.huge or math.abs(targetPosition.Z) == math.huge then return end
+		local direction = (targetPosition - currentFrame.Position) * Vector3.new(1, 0, 1)
+		if direction.Magnitude < 0.01 or direction.Magnitude > 40 then return end
+		local destination = Vector3.new(targetPosition.X, currentFrame.Position.Y, targetPosition.Z) - direction.Unit * 2.2
+		strike = { origin = currentFrame, target = CFrame.lookAt(destination, destination + direction.Unit), elapsed = 0 }
+	end
+	local function cleanup()
+		if stopped then
+			return
+		end
+		stopped = true
+		strike = nil
+		renderConnection:Disconnect()
+		addedConnection:Disconnect()
+		removedConnection:Disconnect()
+		companionConnection:Disconnect()
+		model:Destroy()
+	end
+	return cleanup, strikeAt
+end
+
+return CompanionView
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="16">
+          <Properties>
+            <string name="Name">Hud</string>
+            <string name="Source"><![CDATA[--!nonstrict
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+
+local Hud = {}
+local ink = Color3.fromRGB(30, 52, 55)
+local cream = Color3.fromRGB(250, 245, 226)
+local mint = Color3.fromRGB(119, 214, 173)
+local amber = Color3.fromRGB(244, 186, 91)
+local targetInfo = {
+	{ id = "moss", title = "Bramble Sprout", position = Vector3.new(-45, 7, -25) },
+	{ id = "river", title = "Reed Guardian", position = Vector3.new(0, 7, -65) },
+	{ id = "ruins", title = "The Hollow Crown", position = Vector3.new(65, 7, -80) },
+}
+
+local function make(class, properties, parent)
+	local item = Instance.new(class)
+	for key, value in properties do
+		item[key] = value
+	end
+	item.Parent = parent
+	return item
+end
+
+local function round(item, pixels)
+	make("UICorner", { CornerRadius = UDim.new(0, pixels or 12) }, item)
+end
+
+local function label(parent, text, position, size, fontSize, color)
+	return make("TextLabel", {
+		BackgroundTransparency = 1, Text = text, Position = position, Size = size,
+		TextColor3 = color or cream, TextSize = fontSize or 16,
+		Font = Enum.Font.GothamMedium, TextXAlignment = Enum.TextXAlignment.Left,
+		TextWrapped = true,
+	}, parent)
+end
+
+local function button(parent, text, position, size, callback)
+	local item = make("TextButton", {
+		Text = text, Position = position, Size = size,
+		BackgroundColor3 = mint, TextColor3 = ink, Font = Enum.Font.GothamBold,
+		TextSize = 15, AutoButtonColor = true, BorderSizePixel = 0,
+	}, parent)
+	round(item, 10)
+	item.Activated:Connect(callback)
+	return item
+end
+
+function Hud.start(command, catalog, rules)
+	rules = rules or { meleeCooldown = 0.6, petCooldown = 3.2 }
+	local player = Players.LocalPlayer
+	local destroyed = false
+	local currentState, stateClock, refreshTiming, refreshCooldowns
+	local screen = make("ScreenGui", { Name = "WildbondHUD", ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling }, player:WaitForChild("PlayerGui"))
+	local gui = make("Frame", { Name = "Canvas", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1) }, screen)
+	local scale = make("UIScale", { Scale = 1 }, gui)
+	local attackButton, bondButton
+	local function resize()
+		local camera = workspace.CurrentCamera
+		if camera then
+			scale.Scale = math.clamp(math.min(camera.ViewportSize.X / 850, camera.ViewportSize.Y / 480), 0.5, 1)
+			gui.Size = UDim2.fromScale(1 / scale.Scale, 1 / scale.Scale)
+			if attackButton and UserInputService.TouchEnabled then
+				-- Keep the real pixel gap above Roblox's jump control as the HUD scales.
+				local controlTop = -math.round(194 / scale.Scale)
+				attackButton.Position = UDim2.new(1, -134, 1, controlTop)
+				bondButton.Position = UDim2.new(1, -260, 1, controlTop)
+			end
+		end
+	end
+	resize()
+	-- Polling covers camera replacement after respawn without retaining camera connections.
+	local resizeClock = 0
+	local resizeConnection = RunService.RenderStepped:Connect(function(dt)
+		if refreshCooldowns then refreshCooldowns() end
+		resizeClock += dt
+		if resizeClock >= 1 then
+			resizeClock = 0
+			resize()
+			if refreshTiming then refreshTiming() end
+		end
+	end)
+
+	local mission = make("Frame", {
+		Position = UDim2.fromOffset(18, 18), Size = UDim2.fromOffset(320, 272),
+		BackgroundColor3 = ink, BackgroundTransparency = 0.08, BorderSizePixel = 0,
+	}, gui)
+	round(mission, 16)
+	label(mission, "WILDBOND", UDim2.fromOffset(18, 12), UDim2.fromOffset(280, 26), 23, mint)
+	label(mission, "GREYWATER ISLE  /  PVE ALPHA", UDim2.fromOffset(18, 42), UDim2.fromOffset(280, 18), 10)
+	local objective = label(mission, "Find the hunt board in the village.", UDim2.fromOffset(18, 70), UDim2.fromOffset(284, 42), 16)
+	local rows = {}
+	for index, target in targetInfo do
+		rows[target.id] = label(mission, "○  " .. target.title, UDim2.fromOffset(18, 111 + index * 25), UDim2.fromOffset(284, 23), 14)
+	end
+	local timingLabel = label(mission, "Hunt timer starts at the board.", UDim2.fromOffset(18, 217), UDim2.fromOffset(284, 22), 11, amber)
+	label(mission, "Session progress · saving comes next", UDim2.fromOffset(18, 246), UDim2.fromOffset(284, 16), 10, Color3.fromRGB(184, 201, 198))
+	local function duration(seconds)
+		local whole = math.max(0, math.floor(seconds))
+		return string.format("%d:%02d", math.floor(whole / 60), whole % 60)
+	end
+	local function falls(count)
+		return tostring(count) .. (if count == 1 then " fall" else " falls")
+	end
+	refreshTiming = function()
+		if not currentState or not currentState.timing then return end
+		local timing = currentState.timing
+		if currentState.active then
+			timingLabel.Text = duration((timing.elapsed or 0) + os.clock() - stateClock) .. " elapsed · " .. falls(timing.deaths or 0)
+		elseif timing.lastDuration then
+			timingLabel.Text = "Last " .. duration(timing.lastDuration) .. " · best " .. duration(timing.bestDuration or timing.lastDuration) .. " · falls " .. tostring(timing.lastDeaths or 0)
+		end
+	end
+
+	local purse = make("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -18, 0, 18), Size = UDim2.fromOffset(156, 78), BackgroundColor3 = ink, BorderSizePixel = 0 }, gui)
+	round(purse, 14)
+	local shells = label(purse, "0 shells", UDim2.fromOffset(14, 9), UDim2.fromOffset(132, 27), 22, amber)
+	local hunts = label(purse, "0 hunts completed", UDim2.fromOffset(14, 41), UDim2.fromOffset(132, 18), 11)
+
+	local health = make("Frame", { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -23), Size = UDim2.fromOffset(220, 14), BackgroundColor3 = ink, BorderSizePixel = 0 }, gui)
+	round(health, 7)
+	local healthFill = make("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = mint, BorderSizePixel = 0 }, health)
+	round(healthFill, 7)
+	local healthText = label(gui, "100 / 100", UDim2.new(0.5, -50, 1, -60), UDim2.fromOffset(100, 22), 13)
+	healthText.TextXAlignment = Enum.TextXAlignment.Center
+	local healthConnection
+	local function watchCharacter(character)
+		if healthConnection then
+			healthConnection:Disconnect()
+		end
+		local humanoid = character:WaitForChild("Humanoid", 10)
+		if destroyed or not humanoid then return end
+		local function changed()
+			local fraction = math.clamp(humanoid.Health / math.max(1, humanoid.MaxHealth), 0, 1)
+			TweenService:Create(healthFill, TweenInfo.new(0.15), { Size = UDim2.fromScale(fraction, 1) }):Play()
+			healthText.Text = string.format("%d / %d", humanoid.Health, humanoid.MaxHealth)
+		end
+		healthConnection = humanoid.HealthChanged:Connect(changed)
+		changed()
+	end
+	local characterConnection = player.CharacterAdded:Connect(watchCharacter)
+	if player.Character then task.spawn(watchCharacter, player.Character) end
+
+	local toast = label(gui, "", UDim2.new(0.5, -230, 0, 106), UDim2.fromOffset(460, 48), 16)
+	toast.TextXAlignment = Enum.TextXAlignment.Center
+	toast.BackgroundColor3 = ink
+	toast.BackgroundTransparency = 0.08
+	toast.Visible = false
+	round(toast, 12)
+	local toastVersion = 0
+	local function notify(message, success)
+		if not message then return end
+		toastVersion += 1
+		local version = toastVersion
+		toast.Text = message
+		toast.TextColor3 = if success == false then amber else cream
+		toast.Visible = true
+		task.delay(3.5, function()
+			if version == toastVersion then toast.Visible = false end
+		end)
+	end
+
+	local petPanel = make("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -18, 0, 160), Size = UDim2.fromOffset(320, 213), BackgroundColor3 = ink, BorderSizePixel = 0, Visible = false }, gui)
+	round(petPanel, 14)
+	label(petPanel, "YOUR COMPANIONS", UDim2.fromOffset(16, 10), UDim2.fromOffset(240, 22), 15, mint)
+	label(petPanel, "Earn shells from hunts · equal combat strength.", UDim2.fromOffset(16, 36), UDim2.fromOffset(288, 20), 11)
+	local petButtons = {}
+	for index, pet in catalog do
+		label(petPanel, pet.name, UDim2.fromOffset(16, 66 + (index - 1) * 45), UDim2.fromOffset(160, 34), 14)
+		petButtons[pet.id] = button(petPanel, tostring(pet.cost) .. " shells", UDim2.fromOffset(182, 65 + (index - 1) * 45), UDim2.fromOffset(122, 34), function()
+			if not currentState then return end
+			local action = if currentState.owned[pet.id] then "equip" else "unlock"
+			command:FireServer(action, pet.id)
+		end)
+	end
+	button(gui, "Companions", UDim2.new(1, -174, 0, 105), UDim2.fromOffset(156, 42), function()
+		petPanel.Visible = not petPanel.Visible
+	end)
+
+	local lastAttack = -math.huge
+	local lastBondRequest, bondReadyAt = -math.huge, 0
+	local function attack()
+		if os.clock() - lastAttack < rules.meleeCooldown then return end
+		lastAttack = os.clock()
+		command:FireServer("attack")
+	end
+	local function bond()
+		local now = os.clock()
+		if now < bondReadyAt or now - lastBondRequest < 0.2 then return end
+		lastBondRequest = now
+		command:FireServer("bond")
+	end
+	attackButton = button(gui, "STRIKE", UDim2.new(1, -134, 1, if UserInputService.TouchEnabled then -194 else -96), UDim2.fromOffset(116, 66), attack)
+	bondButton = button(gui, "BOND", UDim2.new(1, -260, 1, if UserInputService.TouchEnabled then -194 else -96), UDim2.fromOffset(116, 66), bond)
+	refreshCooldowns = function()
+		local now = os.clock()
+		for _, entry in { { attackButton, lastAttack + rules.meleeCooldown, "STRIKE" }, { bondButton, bondReadyAt, "BOND" } } do
+			local remaining = math.max(0, entry[2] - now)
+			entry[1].Text = if remaining > 0 then string.format("%s %.1f", entry[3], remaining) else entry[3]
+			entry[1].BackgroundColor3 = if remaining > 0 then amber else mint
+		end
+	end
+	resize()
+	label(gui, if UserInputService.TouchEnabled then "STRIKE + BOND · move out of red circles" else "F / R2 strike · Q / L2 bond · E interact", UDim2.new(0.5, -170, 1, -87), UDim2.fromOffset(340, 20), 11).TextXAlignment = Enum.TextXAlignment.Center
+	local inputConnection = UserInputService.InputBegan:Connect(function(input, processed)
+		if processed then return end
+		if input.KeyCode == Enum.KeyCode.F or input.KeyCode == Enum.KeyCode.ButtonR2 or input.UserInputType == Enum.UserInputType.MouseButton1 then
+			attack()
+		elseif input.KeyCode == Enum.KeyCode.Q or input.KeyCode == Enum.KeyCode.ButtonL2 then
+			bond()
+		elseif input.KeyCode == Enum.KeyCode.C or input.KeyCode == Enum.KeyCode.ButtonY then
+			petPanel.Visible = not petPanel.Visible
+		end
+	end)
+
+	local waypoint = make("Part", { Name = "LocalHuntWaypoint", Size = Vector3.new(1.2, 8, 1.2), Anchored = true, CanCollide = false, CanTouch = false, CanQuery = false, Material = Enum.Material.Neon, Color = mint, Transparency = 0.65 }, workspace)
+	local waypointBillboard = make("BillboardGui", { Size = UDim2.fromOffset(210, 50), StudsOffset = Vector3.new(0, 5, 0), AlwaysOnTop = true, MaxDistance = 400 }, waypoint)
+	local waypointText = label(waypointBillboard, "HUNT BOARD", UDim2.fromScale(0, 0), UDim2.fromScale(1, 1), 16, cream)
+	waypointText.TextXAlignment = Enum.TextXAlignment.Center
+	waypointText.TextStrokeTransparency = 0.2
+
+	local welcome = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(460, 312), BackgroundColor3 = ink, BorderSizePixel = 0 }, gui)
+	welcome.ZIndex = 10
+	round(welcome, 18)
+	label(welcome, "A small island. A wild bond.", UDim2.fromOffset(26, 23), UDim2.fromOffset(408, 54), 26, mint)
+	label(welcome, "Take a hunt at the village board. Strike nearby guardians and dodge their red circles. Send your companion with Q / L2 or BOND.\n\nHold to collect each crystal (0.35s), then return to camp for 60 shells. Unlock companions with earned shells.", UDim2.fromOffset(26, 87), UDim2.fromOffset(408, 127), 15)
+	label(welcome, "Early prototype · progress resets when you leave.\nCompanions share combat strength. No purchases enabled.", UDim2.fromOffset(26, 219), UDim2.fromOffset(408, 37), 11, amber)
+	button(welcome, "Explore Greywater", UDim2.fromOffset(26, 266), UDim2.fromOffset(408, 34), function()
+		welcome:Destroy()
+	end)
+	for _, child in welcome:GetDescendants() do
+		if child:IsA("GuiObject") then child.ZIndex = 11 end
+	end
+
+	local api = {}
+	function api:bondAccepted(cooldown)
+		if destroyed then return end
+		bondReadyAt = os.clock() + (cooldown or rules.petCooldown)
+		refreshCooldowns()
+	end
+	function api:render(state, message, success)
+		if destroyed then return end
+		currentState = state
+		stateClock = os.clock()
+		refreshTiming()
+		shells.Text = tostring(state.shells) .. " shells"
+		hunts.Text = tostring(state.huntsCompleted) .. " hunts completed"
+		local collected = 0
+		local nextTarget
+		for _, target in targetInfo do
+			local done = state.collected[target.id]
+			if done then collected += 1 elseif not nextTarget then nextTarget = target end
+			rows[target.id].Text = (if done then "✓  " elseif state.defeated[target.id] then "◇  " else "○  ") .. target.title .. (if state.defeated[target.id] and not done then " · collect" else "")
+			rows[target.id].TextColor3 = if done then mint else cream
+		end
+		if not state.active then
+			objective.Text = "Take a hunt from the village board."
+			waypoint.Position = Vector3.new(0, 10, 15)
+			waypointText.Text = "HUNT BOARD"
+		elseif collected == 3 then
+			objective.Text = "Return to camp · 60 shells waiting."
+			waypoint.Position = Vector3.new(12, 10, 15)
+			waypointText.Text = "RETURN TO CAMP"
+		else
+			objective.Text = tostring(collected) .. "/3 crystals · dodge red circles."
+			local destination = nextTarget.position
+			if not state.defeated[nextTarget.id] then
+				for _, foe in rules.foes or {} do
+					if foe.id == nextTarget.id then destination = Vector3.new(foe.position.x, foe.position.y, foe.position.z) end
+				end
+			end
+			waypoint.Position = destination + Vector3.new(0, 3, 0)
+			waypointText.Text = if state.defeated[nextTarget.id] then "COLLECT CRYSTAL" else nextTarget.title
+		end
+		for _, pet in catalog do
+			petButtons[pet.id].Text = if state.equipped == pet.id then "Equipped" elseif state.owned[pet.id] then "Equip" else tostring(pet.cost) .. " shells"
+			petButtons[pet.id].BackgroundColor3 = if state.equipped == pet.id then amber else mint
+		end
+		notify(message, success)
+	end
+	function api:destroy()
+		if destroyed then return end
+		destroyed = true
+		toastVersion += 1
+		resizeConnection:Disconnect()
+		inputConnection:Disconnect()
+		characterConnection:Disconnect()
+		if healthConnection then healthConnection:Disconnect() end
+		waypoint:Destroy()
+		screen:Destroy()
+	end
+	return api
+end
+
+return Hud
+]]></string>
+          </Properties>
+        </Item>
+      </Item>
+    </Item>
+  </Item>
+  <Item class="Workspace" referent="17">
+    <Properties>
+      <string name="Name">Workspace</string>
+      <float name="Gravity">196.2</float>
+      <bool name="NeedsPivotMigration">false</bool>
+    </Properties>
+  </Item>
+</roblox>

@@ -1,0 +1,17 @@
+# Thử bản Wildbond hiện tại trong Roblox Studio
+
+Chưa chạy checklist này trong cloud vì máy không có Roblox Studio. Điền kết quả thực sau mỗi lần thử, không coi build thành công là đã chơi được.
+
+1. Mở `build/Wildbond.rbxlx`, nhấn Play. Output không có lỗi đỏ; có đảo, làng, HUD và sói theo nhân vật. Đi quanh làng, vào quán, men theo đường đến ba điểm săn; không mắc ở spawn hoặc rơi qua đất.
+2. Đến expedition board, dùng E nhận hunt. HUD chỉ dẫn Bramble Sprout và bắt đầu đồng hồ săn. Nhận hunt hồi đầy máu; nhận lại khi đang active bị từ chối và không hồi máu. Tiếp cận quái, đánh bằng F hoặc click; máu quái giảm đúng 10, không đánh thường từ ngoài 8 studs. Đứng trong đòn bị mất máu; ra khỏi vòng báo trước khi đòn rơi thì né được.
+3. Dùng Q/L2/BOND khi gần quái: thú lao tới và gây 18 sát thương sau 0,3 giây, cooldown 3,2 giây. Đứng ngoài 18 studs hoặc bị tường cản: không đánh trúng. Đổi thú hoặc chết trước khi đòn tới: đòn bị hủy. Thử đổi sói → cáo → sói trong windup: đòn cũ vẫn bị hủy, không phục hồi bằng đổi lại. Nhấn đòn thường và BOND cùng lúc: hai cooldown độc lập. Ba thú dùng cùng chỉ số, ngoại hình khác nhau.
+4. Thử nhặt tinh thể trước khi giết quái: bị từ chối. Đánh hết máu rồi lấy tinh thể: nhiệm vụ tăng đúng một lần. Thử lại tinh thể: không tăng lần hai.
+5. Làm tương tự Reed Guardian rồi Hollow Crown. Boss đổi giữa MOVE tại vị trí được đánh dấu và RETREAT quanh boss; cả hai có 1,2 giây báo đòn. Khi đủ ba tinh thể, chỉ dẫn trở về rương làng. Nhận đúng 60 shells, hồi đầy máu và hiển thị thời gian/số lần ngã; nhận lại không thêm tiền hoặc hồi máu. Lượt nhanh hơn cập nhật best, lượt chậm hơn giữ best.
+6. Nhận hunt mới, hoàn thành để đủ 120 shells. Mở Ember Fox ở Companions; tiền trừ đúng 120. Equip đổi hình dáng follower. Thử mở Tide Cub khi không đủ tiền: bị từ chối. Tiếp tục hunts để mở Tide Cub bằng 240 shells; sau tổng sáu hunts đủ tiền mở cả cáo và gấu.
+7. Cố ý chết giữa hunt. Hồi sinh ở làng, nhiệm vụ giữ trong cùng phiên; đồng hồ tiếp tục và falls tăng một. Máu không tự hồi khi đứng chờ bị thương. Rời server rồi vào lại: tiến độ reset, đúng giới hạn bản alpha hiện tại.
+8. Dùng Device Emulator kiểm tra điện thoại ngang, máy tính bảng và cửa sổ nhỏ: đọc được nhiệm vụ, STRIKE/BOND bấm được, prompt hoạt động; HUD không che joystick và nút nhảy của Roblox. Kiểm tra gamepad với R2/L2/X/Y.
+9. Dùng Start Server với một, hai rồi bốn client: người đứng xem không tăng máu và không nhận kill. Người thứ hai thực sự đánh tăng tổng máu boss từ 600 lên 990, giữ lượng sát thương đã gây; ba/bốn người là 1380/1770. Rời trận không làm boss tụt máu, quái reset về solo khi không còn người đủ điều kiện ở gần có đường nhìn trong 10 giây. Credit tính cho người có đánh, còn sống và ở gần khi quái chết; loot/thưởng từng người. Hồi sinh rồi đứng cạnh mà không đánh lại không nhận credit từ nhân vật đã chết.
+10. Quái chết hủy cảnh báo và đòn pet đang chờ đúng đời quái, hồi lại sau 6 giây. Bỏ quái giữa trận trên 10 giây rồi quay lại: không giữ damage hoặc đóng góp đời trước.
+11. Ghi ít nhất ba lượt làm quen và ba lượt đã biết đường, cả thất bại; mục tiêu thử 90–180 giây lần đầu và 60–120 giây khi quen. Ghi thời gian tới trận đầu, hai hộ vệ, boss, đường về, falls và đoạn phải chờ. Đây là thử nhịp chơi, chưa phải nghiên cứu người dùng. Xem `docs/balance.md` để phân biệt mục tiêu, mô hình và số đo thật.
+
+Ghi lại thiết bị, cách tái hiện, tên quái, trạng thái hunt và lỗi Output nếu có. Đồ họa cuối cùng, âm thanh, cảm giác đánh và hiệu năng mobile cần thử trong engine ở các mốc sau.

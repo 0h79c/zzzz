@@ -1,0 +1,32 @@
+--!nonstrict
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local shared = ReplicatedStorage:WaitForChild("Wildbond")
+local Expedition = require(shared:WaitForChild("Expedition"))
+local CombatRules = require(shared:WaitForChild("CombatRules"))
+local Hud = require(script:WaitForChild("Hud"))
+local CompanionView = require(script:WaitForChild("CompanionView"))
+local remotes = shared:WaitForChild("Remotes")
+local command = remotes:WaitForChild("Command")
+local update = remotes:WaitForChild("Update")
+local effect = remotes:WaitForChild("Effect")
+
+local hud = Hud.start(command, Expedition.pets, CombatRules)
+local stopCompanion, animateBond = CompanionView.start(Players.LocalPlayer)
+local connection = update.OnClientEvent:Connect(function(state, message, success)
+	hud:render(state, message, success)
+end)
+local effectConnection = effect.OnClientEvent:Connect(function(kind, position)
+	if kind == "bond" and typeof(position) == "Vector3" then
+		animateBond(position)
+		hud:bondAccepted(CombatRules.petCooldown)
+	end
+end)
+command:FireServer("sync")
+
+script.Destroying:Connect(function()
+	connection:Disconnect()
+	effectConnection:Disconnect()
+	stopCompanion()
+	hud:destroy()
+end)

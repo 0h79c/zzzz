@@ -1,0 +1,2 @@
+-- Disable Roblox's default passive regeneration. Hunts start with full health;
+-- completing a hunt or respawning restores it. Damage matters during combat.

@@ -1,0 +1,30 @@
+{
+  "name": "Wildbond",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "Wildbond": { "$path": "src/shared" }
+    },
+    "ServerScriptService": {
+      "WildbondServer": { "$path": "src/server" }
+    },
+    "StarterPlayer": {
+      "$properties": {
+        "CharacterWalkSpeed": 20,
+        "CharacterJumpHeight": 7.2
+      },
+      "StarterPlayerScripts": {
+        "WildbondClient": { "$path": "src/client" }
+      },
+      "StarterCharacterScripts": {
+        "$path": "src/character"
+      }
+    },
+    "Workspace": {
+      "$properties": { "Gravity": 196.2 }
+    },
+    "SoundService": {
+      "$properties": { "RespectFilteringEnabled": true }
+    }
+  }
+}

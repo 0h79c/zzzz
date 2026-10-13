@@ -1,0 +1,107 @@
+local Rules = require("../src/shared/CombatRules")
+
+local checks = 0
+local function check(condition, message)
+	assert(condition, message)
+	checks += 1
+end
+
+local origin = { x = 0, y = 0, z = 0 }
+local edge = { x = 0, y = 0, z = 8 }
+check(Rules.meleeDamage == 10 and Rules.meleeRange == 8 and Rules.meleeCooldown == 0.6, "Melee configuration")
+check(Rules.distanceSquared(origin, { x = 3, y = 4, z = 12 }) == 169, "Distance uses all three axes")
+check(Rules.inRange(origin, edge, 8), "Melee boundary is reachable")
+check(not Rules.inRange(origin, { x = 0, y = 0, z = 8.001 }, 8), "Beyond melee boundary is rejected")
+check(not Rules.inRange(origin, { x = 0, y = 9, z = 0 }, 8), "Vertical distance is authoritative")
+check(Rules.inRange(origin, origin, 0), "Zero distance is in zero range")
+check(not Rules.inRange(origin, origin, -1), "Negative ranges fail closed")
+check(not Rules.inRange(origin, origin, math.huge), "Infinite range fails closed")
+check(not Rules.inRange(origin, { x = 0 / 0, y = 0, z = 0 }, 12), "Invalid position fails closed")
+
+check(Rules.cooldownReady(0, nil, 0.45), "First attack has no previous cooldown")
+check(not Rules.cooldownReady(0.449, 0, 0.45), "Early attack is rejected")
+check(Rules.cooldownReady(0.45, 0, 0.45), "Exact cooldown boundary is accepted")
+check(Rules.cooldownReady(10.45, 10, 0.45), "Cooldown boundary remains stable away from clock zero")
+check(not Rules.cooldownReady(10.449, 10, 0.45), "Early nonzero-clock attack remains rejected")
+check(Rules.cooldownReady(10, 0, 0.45), "Expired cooldown is accepted")
+check(not Rules.cooldownReady(0, 1, 0.45), "Backward clock is rejected")
+check(not Rules.cooldownReady(math.huge, 0, 0.45), "Infinite clock is rejected")
+check(not Rules.cooldownReady(0 / 0, nil, 0.45), "Invalid first clock is rejected")
+check(not Rules.cooldownReady(10, 0 / 0, 0.45), "Invalid previous clock is rejected")
+check(not Rules.cooldownReady(10, 0, -1), "Negative cooldown is rejected")
+
+local state = { active = true, defeated = { moss = false, river = false, ruins = false } }
+check(Rules.eligible(state, true, "moss"), "Living active hunter can hit unfinished guardian")
+check(not Rules.eligible(nil, true, "moss"), "Missing state is rejected")
+check(not Rules.eligible(state, false, "moss"), "Dead player cannot attack or be targeted")
+check(not Rules.eligible(state, true, "unknown"), "Unknown guardian is rejected")
+state.active = false
+check(not Rules.eligible(state, true, "moss"), "Inactive player cannot enter combat")
+state.active = true
+state.defeated.moss = true
+check(not Rules.eligible(state, true, "moss"), "Already defeated guardian cannot target or be hit by that hunter")
+check(Rules.eligible(state, true, "river"), "Defeating one guardian does not block the others")
+state.defeated.moss = false
+
+local rewardEdge = { x = 0, y = 0, z = 40 }
+check(Rules.canReward(state, true, true, true, "moss", rewardEdge, origin), "Contributor earns credit at reward range boundary")
+check(not Rules.canReward(state, true, true, true, "moss", { x = 0, y = 0, z = 40.01 }, origin), "Faraway contributor receives no credit")
+check(not Rules.canReward(state, true, true, false, "moss", origin, origin), "Nearby spectator receives no credit")
+check(not Rules.canReward(state, true, false, true, "moss", origin, origin), "Disconnected contributor receives no credit")
+check(not Rules.canReward(state, false, true, true, "moss", origin, origin), "Dead contributor receives no credit")
+state.defeated.moss = true
+check(not Rules.canReward(state, true, true, true, "moss", origin, origin), "Repeat credit is blocked")
+state.defeated.moss = false
+state.active = false
+check(not Rules.canReward(state, true, true, true, "moss", origin, origin), "Inactive contributor receives no credit")
+state.active = true
+
+local slamCenter = { x = 2, y = 4.1, z = -4 }
+check(Rules.inSlam({ x = 5, y = 7, z = 0 }, slamCenter, 5), "Slam disk includes exact 3-4-5 boundary")
+check(not Rules.inSlam({ x = 5.01, y = 7, z = 0 }, slamCenter, 5), "Moving outside telegraph evades slam")
+check(Rules.inSlam({ x = 2, y = 12.1, z = -4 }, slamCenter, 5), "Height boundary is included")
+check(not Rules.inSlam({ x = 2, y = 12.11, z = -4 }, slamCenter, 5), "Higher platform is outside slam")
+check(not Rules.inSlam({ x = 2, y = -4.01, z = -4 }, slamCenter, 5), "Below disk height tolerance is rejected")
+check(not Rules.inSlam({ x = 0 / 0, y = 7, z = -4 }, slamCenter, 5), "Invalid slam position fails closed")
+check(not Rules.inSlam(slamCenter, slamCenter, -1), "Negative slam radius fails closed")
+
+check(#Rules.foes == 3 and Rules.respawnDelay == 6 and Rules.firstSlamDelay == 0.8, "Three repeatable guardians and engagement warning delay")
+local health = { moss = 140, river = 200, ruins = 600 }
+local seen = {}
+for _, foe in Rules.foes do
+	check(not seen[foe.id] and health[foe.id] == foe.maxHealth, "Unique guardian id and health")
+	seen[foe.id] = true
+	check(foe.windup >= 0.8 and foe.slamDamage < 100, "Slam gives a warning and is survivable at full health")
+	check(Rules.eligible(state, true, foe.id), "Every guardian participates in hunt rules")
+	local hits = math.ceil(foe.maxHealth / Rules.meleeDamage)
+	check(hits == ({ moss = 14, river = 20, ruins = 60 })[foe.id], "Guardian survives expected melee hit count")
+	check((hits - 1) * Rules.meleeCooldown > Rules.firstSlamDelay + foe.windup,
+		"First warning resolves before uninterrupted melee can kill the guardian")
+end
+check(Rules.foes[3].boss and Rules.foes[3].slamRadius == 7 and Rules.foes[3].slamDamage == 22, "Boss has distinct area and damage")
+check(Rules.petDamage == 18 and Rules.petCooldown == 3.2 and Rules.petRange == 18 and Rules.petWindup == 0.3,
+	"Companion strike has its own range, delay, damage, and pacing")
+check(not Rules.canBond(nil) and not Rules.canBond(state), "Missing companion bindings fail closed")
+for _, id in { "mosswolf", "emberfox", "tidecub" } do
+	state.equipped, state.owned = id, { [id] = true }
+	check(Rules.canBond(state), "Every known owned companion has the same combat skill")
+	state.owned[id] = false
+	check(not Rules.canBond(state), "Unowned companion cannot use the skill")
+end
+state.equipped, state.owned = "invented", { invented = true }
+check(not Rules.canBond(state), "Fabricated companion id is rejected")
+check(Rules.scaledHealth(140, 1) == 140 and Rules.scaledHealth(140, 2) == 231,
+	"Two contributors increase health less than their combined damage")
+check(Rules.scaledHealth(140, 4) == 413 and Rules.scaledHealth(140, 100) == 413,
+	"Party health growth is capped at four contributors")
+check(Rules.scaledHealth(140, 0) == 140, "Empty party defaults to solo health")
+check(Rules.encounterResetDelay == 10, "Abandoned fight has a generous return window")
+local target, burst, third = Rules.attackPattern(Rules.foes[3], 1), Rules.attackPattern(Rules.foes[3], 2), Rules.attackPattern(Rules.foes[3], 3)
+check(not target.centered and target.radius == 7 and burst.centered and burst.radius == 10 and not third.centered,
+	"Boss alternates captured player disk and anchored center disk")
+check(target.windup == 1.2 and burst.damage == 22, "Both boss patterns preserve clear warning and equal damage")
+check(not Rules.attackPattern(Rules.foes[1], 2).centered, "Small guardian remains a single introductory pattern")
+check(not pcall(function() Rules.foes[1].maxHealth = 1 end), "Guardian definitions are immutable")
+check(not pcall(function() Rules.foes[1].position.x = 999 end), "Guardian spawn definitions are immutable")
+
+print("CombatRules: " .. checks .. " checks passed")
