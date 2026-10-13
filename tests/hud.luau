@@ -49,6 +49,9 @@ local playerGui = roblox.Instance.new("Folder")
 local character = roblox.Instance.new("Model")
 local humanoid = roblox.Instance.new("Humanoid")
 humanoid.Health, humanoid.MaxHealth, humanoid.Parent = 100, 100, character
+humanoid.MoveDirection = roblox.Vector3.new(3, 0, 4)
+local root = roblox.Instance.new("Part")
+root.Name, root.CFrame, root.Parent = "HumanoidRootPart", roblox.CFrame.new(0, 7, 0), character
 local render, input, added = signal(), signal(), signal()
 local player = {
 	Character = character, CharacterAdded = added,
@@ -56,9 +59,17 @@ local player = {
 }
 local pending, commands = {}, {}
 local command = { FireServer = function(_, action, id) table.insert(commands, { action, id }) end }
+local boundActions, focus = {}, nil
 local services = {
 	Players = { LocalPlayer = player }, RunService = { RenderStepped = render },
-	UserInputService = { TouchEnabled = true, InputBegan = input },
+	UserInputService = { TouchEnabled = true, InputBegan = input, GetFocusedTextBox = function() return focus end },
+	ContextActionService = {
+		BindActionAtPriority = function(_, name, callback, touch, priority, key)
+			check(touch == false and priority > roblox.Enum.ContextActionPriority.High.Value and key == roblox.Enum.KeyCode.Space, "Double Space intercepts only Space above Roblox's jump action")
+			boundActions[name] = callback
+		end,
+		UnbindAction = function(_, name) boundActions[name] = nil end,
+	},
 	TweenService = { Create = function(_, item, _, goal)
 		return { Play = function() for key, value in goal do item[key] = value end end }
 	end },
@@ -81,9 +92,24 @@ local function textItem(text)
 	error("Missing HUD text: " .. text)
 end
 local strikeButton, bondButton = textItem("STRIKE"), textItem("BOND")
+local dodgeButton = textItem("DODGE")
+local hotbar = assert(canvas:FindFirstChild("SkillHotbar"))
+for index = 1, 8 do
+	local slot = assert(hotbar:FindFirstChild("SkillSlot" .. tostring(index)))
+	check(slot:IsA(if index == 1 then "TextButton" else "TextLabel"), "Only learned slot 1 is interactive; slot " .. tostring(index))
+end
 local scale = canvas:FindFirstChildOfClass("UIScale").Scale
-check(math.abs(strikeButton.Position.Y.Offset * scale + 194) < 0.5, "Mobile strike stays 194 physical pixels above the bottom despite HUD scaling")
+check(-strikeButton.Position.Y.Offset * scale >= 194, "Mobile strike preserves at least the 194-pixel native-jump gap despite HUD scaling")
 check(strikeButton.Position.Y == bondButton.Position.Y and bondButton.Position.X.Offset < strikeButton.Position.X.Offset, "Mobile attack controls sit side by side above native jump")
+check(math.abs(hotbar.Position.Y.Offset * scale + 145) < 0.5, "Hotbar keeps a physical gap above native mobile controls")
+local function actionRowsClear()
+	local strikeBottom = (-strikeButton.Position.Y.Offset - strikeButton.Size.Y.Offset) * scale
+	local hotbarTop = (-hotbar.Position.Y.Offset + hotbar.Size.Y.Offset) * scale
+	local dodgeBottom = (-dodgeButton.Position.Y.Offset - dodgeButton.Size.Y.Offset) * scale
+	local strikeTop = -strikeButton.Position.Y.Offset * scale
+	return strikeBottom >= hotbarTop + 11 and dodgeBottom >= strikeTop + 19
+end
+check(actionRowsClear(), "Action buttons, dodge and the eight-slot hotbar do not overlap on a narrow landscape screen")
 activated[strikeButton]:Fire()
 now = 0.5
 activated[strikeButton]:Fire()
@@ -91,13 +117,16 @@ check(#commands == 1, "HUD does not send a melee swing before the shared 0.6s co
 now = 0.6
 activated[strikeButton]:Fire()
 check(#commands == 2 and commands[2][1] == "attack", "Melee becomes available at the rules cooldown")
+check(strikeButton.Text == "STRIKE", "A raw click never starts the visible melee cooldown")
+hud:meleeAccepted()
+check(strikeButton.Text == "STRIKE 0.6", "Accepted server melee starts the cooldown display")
 
 activated[bondButton]:Fire()
 now = 0.7
 activated[bondButton]:Fire()
 check(#commands == 3 and commands[3][1] == "bond", "Immediate repeated bond request is locally throttled")
 now = 0.81
-input:Fire({ KeyCode = roblox.Enum.KeyCode.Q }, false)
+input:Fire({ KeyCode = roblox.Enum.KeyCode.One }, false)
 check(#commands == 4, "Rejected or unanswered bond request does not start the combat cooldown")
 hud:bondAccepted()
 check(bondButton.Text == "BOND 3.2", "Accepted server bond starts a one-decimal cooldown display")
@@ -108,8 +137,50 @@ now = 4.02
 render:Fire(1)
 input:Fire({ KeyCode = roblox.Enum.KeyCode.ButtonL2 }, false)
 check(#commands == 5 and bondButton.Text == "BOND", "Controller bond returns after the shared cooldown")
-input:Fire({ KeyCode = roblox.Enum.KeyCode.Q }, true)
+input:Fire({ KeyCode = roblox.Enum.KeyCode.One }, true)
 check(#commands == 5, "Processed chat/UI inputs do not trigger combat")
+input:Fire({ KeyCode = roblox.Enum.KeyCode.Q }, false)
+input:Fire({ KeyCode = roblox.Enum.KeyCode.F }, false)
+for _, key in { "Two", "Three", "Four", "Five", "Six", "Seven", "Eight" } do input:Fire({ KeyCode = roblox.Enum.KeyCode[key] }, false) end
+check(#commands == 5, "Removed F/Q bindings and unlearned slots send no fake actions")
+focus = {}
+input:Fire({ KeyCode = roblox.Enum.KeyCode.ButtonR2 }, false)
+input:Fire({ KeyCode = roblox.Enum.KeyCode.ButtonB }, false)
+check(#commands == 5, "Focused text input blocks attacks and dodge")
+focus = nil
+
+local space = assert(boundActions.WildbondDoubleSpaceDodge)
+check(space("", roblox.Enum.UserInputState.Begin) == roblox.Enum.ContextActionResult.Pass, "First Space retains normal Roblox jump")
+input:Fire({ KeyCode = roblox.Enum.KeyCode.Space }, true)
+now += 0.2
+check(space("", roblox.Enum.UserInputState.Begin) == roblox.Enum.ContextActionResult.Sink, "A processed default-jump event cannot erase CAS history; second Space is consumed")
+check(#commands == 6 and commands[6][1] == "dodge" and (commands[6][2] - roblox.Vector3.new(0.6, 0, 0.8)).Magnitude < 0.001, "Double Space sends a normalized horizontal move direction")
+check(dodgeButton.Text == "DODGE", "Unanswered dodge does not start a displayed cooldown")
+hud:dodgeAccepted()
+check(dodgeButton.Text == "DODGE 4.0", "Accepted server dodge displays the shared cooldown")
+now += 1
+input:Fire({ KeyCode = roblox.Enum.KeyCode.ButtonB }, false)
+activated[dodgeButton]:Fire()
+check(#commands == 6, "Touch and gamepad dodge respect the accepted cooldown")
+now += 3.1
+humanoid.MoveDirection = roblox.Vector3.zero
+input:Fire({ KeyCode = roblox.Enum.KeyCode.ButtonB }, false)
+check(#commands == 7 and commands[7][2] == roblox.Vector3.new(0, 0, -1), "Stationary controller dodge uses the character's forward direction")
+now += 0.3
+space("", roblox.Enum.UserInputState.Begin)
+now += 0.29
+check(space("", roblox.Enum.UserInputState.Begin) == roblox.Enum.ContextActionResult.Pass and #commands == 7, "Two Space taps outside 0.28s remain normal jumps")
+focus = {}
+space("", roblox.Enum.UserInputState.Begin)
+focus = nil
+now += 0.1
+check(space("", roblox.Enum.UserInputState.Begin) == roblox.Enum.ContextActionResult.Pass and #commands == 7, "Chat-focused Space cannot seed a later dodge")
+input:Fire({ KeyCode = roblox.Enum.KeyCode.Space }, true)
+now += 0.1
+check(space("", roblox.Enum.UserInputState.Begin) == roblox.Enum.ContextActionResult.Sink and #commands == 8, "Only CAS owns Space history across processed UIS jump events")
+input:Fire({ KeyCode = roblox.Enum.KeyCode.Space }, true)
+now += 0.1
+check(space("", roblox.Enum.UserInputState.Begin) == roblox.Enum.ContextActionResult.Pass and #commands == 8, "A second Sink's processed event cannot corrupt the next normal first tap")
 
 local state = Expedition.new()
 state.active = true
@@ -133,15 +204,17 @@ viewport = roblox.Vector2.new(390, 844)
 camera.ViewportSize = viewport
 render:Fire(1)
 scale = canvas:FindFirstChildOfClass("UIScale").Scale
-check(math.abs(strikeButton.Position.Y.Offset * scale + 194) < 0.5, "Portrait resize preserves the physical touch-control gap")
+check(-strikeButton.Position.Y.Offset * scale >= 194 and actionRowsClear(), "Portrait resize preserves touch-control gaps without overlapping the hotbar")
 hud:destroy()
 hud:destroy()
 check(#playerGui:GetChildren() == 0 and scene:FindFirstChild("LocalHuntWaypoint") == nil, "HUD cleanup removes owned GUI and local waypoint")
 check(render.Active() == 0 and input.Active() == 0 and added.Active() == 0 and healthEvents[humanoid].Active() == 0, "HUD cleanup disconnects frame, input, character and health signals")
-input:Fire({ KeyCode = roblox.Enum.KeyCode.Q }, false)
+input:Fire({ KeyCode = roblox.Enum.KeyCode.One }, false)
 for _, callback in pending do callback() end
 hud:render(state)
 hud:bondAccepted()
-check(#commands == 5, "Removed HUD cannot issue further input commands")
+hud:dodgeAccepted()
+hud:meleeAccepted()
+check(#commands == 8 and boundActions.WildbondDoubleSpaceDodge == nil, "Removed HUD cannot issue input commands and releases its Space action")
 check(#playerGui:GetChildren() == 0, "Delayed notifications and late updates cannot revive a destroyed HUD")
 print("HUD: " .. checks .. " reflected GUI, input, timing and cleanup checks passed; native controls/rendering require Studio")

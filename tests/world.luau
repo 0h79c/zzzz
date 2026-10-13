@@ -80,8 +80,8 @@ end
 
 local function validateWorld(result)
 	local island = workspace:FindFirstChild("FirstTrailIsland")
-	check(island ~= nil and island:IsA("Model"), "Builder must create the island Model")
-	local allParts, trails, allPrompts = {}, {}, {}
+	check(island ~= nil and island:IsA("Model"), "Builder must create the compatible region Model")
+	local allParts, trails, allPrompts, walkingRoutes = {}, {}, {}, {}
 	local colliders = {}
 	for _, object in island:GetDescendants() do
 		if object:IsA("BasePart") then
@@ -91,6 +91,9 @@ local function validateWorld(result)
 			if object.Name == "Trail" then
 				table.insert(trails, object)
 			end
+			if object.Name == "Trail" or object.Name == "CarriageApproach" then
+				table.insert(walkingRoutes, object)
+			end
 			if object.CanCollide then
 				table.insert(colliders, bounds(object))
 			end
@@ -98,10 +101,16 @@ local function validateWorld(result)
 			table.insert(allPrompts, object)
 		end
 	end
-	check(#allParts > 100 and #allParts < 650, "Island exceeds the prototype geometry budget")
+	check(#allParts > 100 and #allParts < 650, "Region exceeds the prototype geometry budget")
 	check(island:GetAttribute("GeneratedPartCount") == #allParts, "Generated part count must include every BasePart")
 	check(island:GetAttribute("PrototypeGeometry") == true, "Prototype geometry must be identified")
+	check(island:GetAttribute("RegionName") == "Greywater Reach", "Visible region needs its mainland identity")
+	check(island:GetAttribute("TravelImplemented") == false, "Future travel must not claim to work")
+	check(island:FindFirstChild("Sea") == nil and island:FindFirstChild("SouthBeach") == nil and island:FindFirstChild("EasternShore") == nil, "Starting region must not be an ocean-surrounded island")
+	local landscape = island:FindFirstChild("WoodlandLandscape")
+	check(landscape ~= nil and landscape:IsA("BasePart") and landscape.CanCollide and landscape.Size.X > 1000 and landscape.Size.Z > 1000, "Mainland must continue beneath the surrounding ridges")
 	check(#trails == 9, "Village and expedition routes must all be present")
+	check(#walkingRoutes == 11, "Carriage stop needs two supported approach sections")
 	check(#allPrompts == 5, "Exactly five map interactions are required")
 	local expected = { start = true, ["return"] = true, moss = true, river = true, ruins = true }
 	local count = 0
@@ -121,6 +130,7 @@ local function validateWorld(result)
 	local ground = island:FindFirstChild("IslandMeadow")
 	check(ground ~= nil and ground:IsA("BasePart") and ground.CanCollide, "Playable ground must be solid")
 	check(close(ground.CFrame.UpVector.Y, 1), "Playable meadow must be level")
+	check(ground.Size.X >= 220 and ground.Size.Z >= 260, "Valley needs a larger connected playable meadow")
 	local groundTop = ground.CFrame.Position.Y + ground.Size.Y / 2
 	check(close(groundTop, 4), "Combat and world ground height must agree")
 	local function supported(point)
@@ -144,7 +154,7 @@ local function validateWorld(result)
 		return true
 	end
 
-	for _, trail in trails do
+	for _, trail in walkingRoutes do
 		check(close(trail.CFrame.UpVector.Y, 1) and close(trail.Size.Y, 0.12), "All player trails must be flat")
 		local samples = math.ceil(trail.Size.Z / 2)
 		for index = 0, samples do
@@ -166,7 +176,22 @@ local function validateWorld(result)
 	check(close(spawn.Position.Y - spawn.Size.Y / 2, groundTop), "Spawn must sit on the meadow")
 	local spawnClear, spawnObstacle = clear(spawn.Position, 1.75, groundTop + 0.3, groundTop + 6, false)
 	check(spawnClear, "Spawn is obstructed by " .. tostring(spawnObstacle))
-	check(supported(result.companionSpawn), "Starter companion must appear above the island")
+	check(supported(result.companionSpawn), "Starter companion must appear above the region")
+
+	local carriageSign = island:FindFirstChild("CarriageStopSign")
+	check(carriageSign ~= nil and carriageSign:IsA("BasePart"), "Region needs a visible carriage stop")
+	local signGui = carriageSign:FindFirstChild("LandmarkLabel")
+	local signText = if signGui then signGui:FindFirstChildOfClass("TextLabel") else nil
+	check(signText ~= nil and signText.Text == "Other regions — future update", "Carriage stop must clearly mark future travel")
+	check(carriageSign:FindFirstChildOfClass("ProximityPrompt") == nil, "Carriage stop must not offer fake teleport interaction")
+	for z = 55, 69, 2 do
+		local point = Vector3.new(-45, groundTop, z)
+		local accessible, obstacle = clear(point, 1.25, groundTop + 0.3, groundTop + 5.7, false)
+		check(supported(point) and accessible, "Players must reach the carriage stop without obstruction: " .. tostring(obstacle))
+	end
+	for _, name in { "DraftHorseBody", "CarriageBed", "WaygateLintel", "ValleySideRidge", "SouthernRidge", "NorthernCliff", "DistantWoodlandRidge" } do
+		check(island:FindFirstChild(name) ~= nil, "Woodland region landmark is missing: " .. name)
+	end
 
 	for _, foe in Rules.foes do
 		local position = Vector3.new(foe.position.x, foe.position.y, foe.position.z)
@@ -188,7 +213,7 @@ local function validateWorld(result)
 		check(openSamples >= 18, "Guardian needs clear dodge space on at least three quarters of its arena: " .. foe.id)
 	end
 
-	check(lighting.GlobalShadows and lighting.ClockTime > 10 and lighting.ClockTime < 17, "Island lighting must use readable daylight")
+	check(lighting.GlobalShadows and lighting.ClockTime > 10 and lighting.ClockTime < 17, "Region lighting must use readable daylight")
 	for _, name in { "FirstTrailAtmosphere", "FirstTrailColor", "FirstTrailBloom" } do
 		check(lighting:FindFirstChild(name) ~= nil, "A required lighting effect is missing: " .. name)
 	end
@@ -219,7 +244,7 @@ for _, child in workspace:GetChildren() do
 		islandCount += 1
 	end
 end
-check(islandCount == 1, "Repeated builds must leave exactly one generated island")
+check(islandCount == 1, "Repeated builds must leave exactly one generated region")
 local effectCount = 0
 for _, child in lighting:GetChildren() do
 	if child.Name == "FirstTrailAtmosphere" or child.Name == "FirstTrailColor" or child.Name == "FirstTrailBloom" then

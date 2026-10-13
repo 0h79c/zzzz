@@ -9,7 +9,7 @@ while IFS= read -r -d '' source; do
   .tools/luau-compile "$source" >/dev/null
 done < <(find src tests -name '*.luau' -print0)
 .tools/luau-compile scripts/balance_report.luau >/dev/null
-.tools/luau-analyze src/shared/Expedition.luau src/shared/CombatRules.luau src/shared/HuntMetrics.luau
+.tools/luau-analyze src/shared/Expedition.luau src/shared/CombatRules.luau src/shared/HuntMetrics.luau src/shared/DodgeRules.luau
 for test in tests/*.luau; do
   .tools/lune run "$test"
 done

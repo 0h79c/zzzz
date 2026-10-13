@@ -65,7 +65,7 @@ check(not Rules.inSlam({ x = 2, y = -4.01, z = -4 }, slamCenter, 5), "Below disk
 check(not Rules.inSlam({ x = 0 / 0, y = 7, z = -4 }, slamCenter, 5), "Invalid slam position fails closed")
 check(not Rules.inSlam(slamCenter, slamCenter, -1), "Negative slam radius fails closed")
 
-check(#Rules.foes == 3 and Rules.respawnDelay == 6 and Rules.firstSlamDelay == 0.8, "Three repeatable guardians and engagement warning delay")
+check(#Rules.foes == 3 and Rules.respawnDelay == 6 and Rules.firstSlamDelay == 2.8, "Three repeatable guardians and engagement warning delay")
 local health = { moss = 140, river = 200, ruins = 600 }
 local seen = {}
 for _, foe in Rules.foes do
@@ -103,5 +103,19 @@ check(target.windup == 1.2 and burst.damage == 22, "Both boss patterns preserve 
 check(not Rules.attackPattern(Rules.foes[1], 2).centered, "Small guardian remains a single introductory pattern")
 check(not pcall(function() Rules.foes[1].maxHealth = 1 end), "Guardian definitions are immutable")
 check(not pcall(function() Rules.foes[1].position.x = 999 end), "Guardian spawn definitions are immutable")
+
+check(Rules.patrolRadius < Rules.leashRadius and Rules.chaseSpeed > Rules.patrolSpeed,
+	"Foes roam locally and run faster when chasing")
+check(Rules.enemyMeleeWindup >= 0.45 and Rules.enemyMeleeCooldown > Rules.enemyMeleeWindup + Rules.enemyMeleeRecover,
+	"Melee has a readable windup, recovery, and gap before the next strike")
+local forward = { x = 0, y = 0, z = 1 }
+check(Rules.inEnemyMelee({ x = 0, y = 0, z = 5 }, origin, forward), "Enemy front arc includes exact melee range")
+check(not Rules.inEnemyMelee({ x = 0, y = 0, z = -3 }, origin, forward), "Moving behind the captured facing avoids melee")
+check(not Rules.inEnemyMelee({ x = 5, y = 0, z = 0 }, origin, forward), "Melee excludes the lateral arc")
+check(not Rules.inEnemyMelee({ x = 0, y = 0, z = 5.01 }, origin, forward), "Melee rejects an out-of-range impact")
+check(not Rules.inEnemyMelee(origin, origin, origin), "Invalid facing fails closed")
+check(Rules.canTakeDamage(3, nil) and not Rules.canTakeDamage(3, 3.001), "Server dodge expiry gates enemy damage")
+check(Rules.canTakeDamage(3, 3) and Rules.canTakeDamage(3, "invented"), "Expiry boundary damages; invalid dodge data does not grant immunity")
+check(not Rules.canTakeDamage(0 / 0, 1), "Invalid damage clock fails closed")
 
 print("CombatRules: " .. checks .. " checks passed")

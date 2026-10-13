@@ -3,6 +3,7 @@ local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
+local ContextActionService = game:GetService("ContextActionService")
 
 local Hud = {}
 local ink = Color3.fromRGB(30, 52, 55)
@@ -48,25 +49,33 @@ local function button(parent, text, position, size, callback)
 	return item
 end
 
-function Hud.start(command, catalog, rules)
+function Hud.start(command, catalog, rules, dodgeRules)
 	rules = rules or { meleeCooldown = 0.6, petCooldown = 3.2 }
+	dodgeRules = dodgeRules or { cooldown = 4, doubleTapWindow = 0.28 }
 	local player = Players.LocalPlayer
 	local destroyed = false
 	local currentState, stateClock, refreshTiming, refreshCooldowns
 	local screen = make("ScreenGui", { Name = "WildbondHUD", ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling }, player:WaitForChild("PlayerGui"))
 	local gui = make("Frame", { Name = "Canvas", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1) }, screen)
 	local scale = make("UIScale", { Scale = 1 }, gui)
-	local attackButton, bondButton
+	local attackButton, bondButton, dodgeButton, hotbar, companionToggle
 	local function resize()
 		local camera = workspace.CurrentCamera
 		if camera then
 			scale.Scale = math.clamp(math.min(camera.ViewportSize.X / 850, camera.ViewportSize.Y / 480), 0.5, 1)
 			gui.Size = UDim2.fromScale(1 / scale.Scale, 1 / scale.Scale)
-			if attackButton and UserInputService.TouchEnabled then
-				-- Keep the real pixel gap above Roblox's jump control as the HUD scales.
-				local controlTop = -math.round(194 / scale.Scale)
-				attackButton.Position = UDim2.new(1, -134, 1, controlTop)
-				bondButton.Position = UDim2.new(1, -260, 1, controlTop)
+			if attackButton then
+				local hotbarBottom = if UserInputService.TouchEnabled then 145 else 76 * scale.Scale
+				-- Keep at least the former 194-pixel native-jump gap, and put
+				-- the action row above the hotbar at every scale and aspect ratio.
+				local hintGap = if UserInputService.TouchEnabled then 12 else 36 * scale.Scale
+				local rowTop = hotbarBottom + 132 * scale.Scale + hintGap
+				if UserInputService.TouchEnabled then rowTop = math.max(194, rowTop) end
+				attackButton.Position = UDim2.new(1, -134, 1, -math.round(rowTop / scale.Scale))
+				bondButton.Position = UDim2.new(1, -260, 1, attackButton.Position.Y.Offset)
+				dodgeButton.Position = UDim2.new(1, -134, 1, -math.round((rowTop + 58 * scale.Scale + 20) / scale.Scale))
+				hotbar.Position = UDim2.new(0.5, 0, 1, -math.round(hotbarBottom / scale.Scale))
+				if UserInputService.TouchEnabled then companionToggle.Position = UDim2.new(1, -340, 0, 18) end
 			end
 		end
 	end
@@ -89,7 +98,7 @@ function Hud.start(command, catalog, rules)
 	}, gui)
 	round(mission, 16)
 	label(mission, "WILDBOND", UDim2.fromOffset(18, 12), UDim2.fromOffset(280, 26), 23, mint)
-	label(mission, "GREYWATER ISLE  /  PVE ALPHA", UDim2.fromOffset(18, 42), UDim2.fromOffset(280, 18), 10)
+	label(mission, "GREYWATER REACH  /  PVE ALPHA", UDim2.fromOffset(18, 42), UDim2.fromOffset(280, 18), 10)
 	local objective = label(mission, "Find the hunt board in the village.", UDim2.fromOffset(18, 70), UDim2.fromOffset(284, 42), 16)
 	local rows = {}
 	for index, target in targetInfo do
@@ -175,45 +184,108 @@ function Hud.start(command, catalog, rules)
 			command:FireServer(action, pet.id)
 		end)
 	end
-	button(gui, "Companions", UDim2.new(1, -174, 0, 105), UDim2.fromOffset(156, 42), function()
+	companionToggle = button(gui, "Companions", UDim2.new(1, -174, 0, 105), UDim2.fromOffset(156, 42), function()
 		petPanel.Visible = not petPanel.Visible
 	end)
 
-	local lastAttack = -math.huge
+	local lastAttackRequest, attackReadyAt = -math.huge, 0
 	local lastBondRequest, bondReadyAt = -math.huge, 0
+	local lastDodgeRequest, dodgeReadyAt = -math.huge, 0
+	local function focused()
+		return destroyed or UserInputService:GetFocusedTextBox() ~= nil
+	end
 	local function attack()
-		if os.clock() - lastAttack < rules.meleeCooldown then return end
-		lastAttack = os.clock()
+		if focused() then return end
+		local now = os.clock()
+		if now < attackReadyAt or now - lastAttackRequest < rules.meleeCooldown then return end
+		lastAttackRequest = now
 		command:FireServer("attack")
 	end
 	local function bond()
+		if focused() then return end
 		local now = os.clock()
 		if now < bondReadyAt or now - lastBondRequest < 0.2 then return end
 		lastBondRequest = now
 		command:FireServer("bond")
 	end
+	local function dodge()
+		if focused() then return end
+		local now = os.clock()
+		if now < dodgeReadyAt or now - lastDodgeRequest < 0.2 then return end
+		local character = player.Character
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+		local root = character and character:FindFirstChild("HumanoidRootPart")
+		if not humanoid or humanoid.Health <= 0 or not root or not root:IsA("BasePart") then return end
+		local direction = humanoid.MoveDirection * Vector3.new(1, 0, 1)
+		if direction.Magnitude < 0.01 then direction = root.CFrame.LookVector * Vector3.new(1, 0, 1) end
+		if direction.Magnitude < 0.01 then return end
+		lastDodgeRequest = now
+		command:FireServer("dodge", direction.Unit)
+	end
 	attackButton = button(gui, "STRIKE", UDim2.new(1, -134, 1, if UserInputService.TouchEnabled then -194 else -96), UDim2.fromOffset(116, 66), attack)
 	bondButton = button(gui, "BOND", UDim2.new(1, -260, 1, if UserInputService.TouchEnabled then -194 else -96), UDim2.fromOffset(116, 66), bond)
+	dodgeButton = button(gui, "DODGE", UDim2.new(1, -134, 1, if UserInputService.TouchEnabled then -276 else -174), UDim2.fromOffset(116, 58), dodge)
+	-- Slot 1 is a temporary companion command while class skills are being built.
+	-- Empty slots deliberately have no click or key actions.
+	hotbar = make("Frame", { Name = "SkillHotbar", AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -76), Size = UDim2.fromOffset(566, 66), BackgroundTransparency = 1 }, gui)
+	local slots = {}
+	for index = 1, 8 do
+		local slot = make(if index == 1 then "TextButton" else "TextLabel", {
+			Name = "SkillSlot" .. tostring(index), Position = UDim2.fromOffset((index - 1) * 72, 0), Size = UDim2.fromOffset(62, 62),
+			Text = "", BackgroundColor3 = if index == 1 then ink else Color3.fromRGB(43, 58, 61),
+			BackgroundTransparency = if index == 1 then 0.08 else 0.25, BorderSizePixel = 0,
+		}, hotbar)
+		round(slot, 10)
+		label(slot, tostring(index), UDim2.fromOffset(6, 3), UDim2.fromOffset(18, 16), 11, if index == 1 then mint else Color3.fromRGB(160, 170, 171))
+		slots[index] = label(slot, if index == 1 then "Bond" else "Unlearned", UDim2.fromOffset(3, 22), UDim2.fromOffset(56, 30), if index == 1 then 13 else 9, if index == 1 then cream else Color3.fromRGB(160, 170, 171))
+		if index == 1 then slot.Activated:Connect(bond) end
+	end
 	refreshCooldowns = function()
 		local now = os.clock()
-		for _, entry in { { attackButton, lastAttack + rules.meleeCooldown, "STRIKE" }, { bondButton, bondReadyAt, "BOND" } } do
+		for _, entry in { { attackButton, attackReadyAt, "STRIKE" }, { bondButton, bondReadyAt, "BOND" }, { dodgeButton, dodgeReadyAt, "DODGE" } } do
 			local remaining = math.max(0, entry[2] - now)
 			entry[1].Text = if remaining > 0 then string.format("%s %.1f", entry[3], remaining) else entry[3]
 			entry[1].BackgroundColor3 = if remaining > 0 then amber else mint
 		end
+		local remaining = math.max(0, bondReadyAt - now)
+		slots[1].Text = if remaining > 0 then string.format("Bond\n%.1f", remaining) else "Bond"
 	end
 	resize()
-	label(gui, if UserInputService.TouchEnabled then "STRIKE + BOND · move out of red circles" else "F / R2 strike · Q / L2 bond · E interact", UDim2.new(0.5, -170, 1, -87), UDim2.fromOffset(340, 20), 11).TextXAlignment = Enum.TextXAlignment.Center
+	local controlsHint = label(gui, "Click / R2 strike · 1 / L2 companion · double Space / B dodge", UDim2.new(0.5, -245, 1, -166), UDim2.fromOffset(490, 20), 10)
+	controlsHint.TextXAlignment = Enum.TextXAlignment.Center
+	controlsHint.Visible = not UserInputService.TouchEnabled
+	local lastSpace = -math.huge
 	local inputConnection = UserInputService.InputBegan:Connect(function(input, processed)
-		if processed then return end
-		if input.KeyCode == Enum.KeyCode.F or input.KeyCode == Enum.KeyCode.ButtonR2 or input.UserInputType == Enum.UserInputType.MouseButton1 then
+		-- ContextActionService alone owns Space history. Roblox's normal jump
+		-- can mark the first tap processed after our action returned Pass.
+		if processed or focused() then return end
+		if input.KeyCode == Enum.KeyCode.ButtonR2 or input.UserInputType == Enum.UserInputType.MouseButton1 then
 			attack()
-		elseif input.KeyCode == Enum.KeyCode.Q or input.KeyCode == Enum.KeyCode.ButtonL2 then
+		elseif input.KeyCode == Enum.KeyCode.One or input.KeyCode == Enum.KeyCode.ButtonL2 then
 			bond()
+		elseif input.KeyCode == Enum.KeyCode.ButtonB then
+			dodge()
 		elseif input.KeyCode == Enum.KeyCode.C or input.KeyCode == Enum.KeyCode.ButtonY then
 			petPanel.Visible = not petPanel.Visible
 		end
 	end)
+	local spaceAction = "WildbondDoubleSpaceDodge"
+	ContextActionService:BindActionAtPriority(spaceAction, function(_, state)
+		if focused() then
+			lastSpace = -math.huge
+			return Enum.ContextActionResult.Pass
+		end
+		if state ~= Enum.UserInputState.Begin then return Enum.ContextActionResult.Pass end
+		local now = os.clock()
+		if now - lastSpace <= (dodgeRules.doubleTapWindow or 0.28) then
+			lastSpace = -math.huge
+			dodge()
+			-- The first tap remains Roblox's normal jump; the second is the dodge.
+			return Enum.ContextActionResult.Sink
+		end
+		lastSpace = now
+		return Enum.ContextActionResult.Pass
+	end, false, Enum.ContextActionPriority.High.Value + 10, Enum.KeyCode.Space)
 
 	local waypoint = make("Part", { Name = "LocalHuntWaypoint", Size = Vector3.new(1.2, 8, 1.2), Anchored = true, CanCollide = false, CanTouch = false, CanQuery = false, Material = Enum.Material.Neon, Color = mint, Transparency = 0.65 }, workspace)
 	local waypointBillboard = make("BillboardGui", { Size = UDim2.fromOffset(210, 50), StudsOffset = Vector3.new(0, 5, 0), AlwaysOnTop = true, MaxDistance = 400 }, waypoint)
@@ -224,10 +296,10 @@ function Hud.start(command, catalog, rules)
 	local welcome = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(460, 312), BackgroundColor3 = ink, BorderSizePixel = 0 }, gui)
 	welcome.ZIndex = 10
 	round(welcome, 18)
-	label(welcome, "A small island. A wild bond.", UDim2.fromOffset(26, 23), UDim2.fromOffset(408, 54), 26, mint)
-	label(welcome, "Take a hunt at the village board. Strike nearby guardians and dodge their red circles. Send your companion with Q / L2 or BOND.\n\nHold to collect each crystal (0.35s), then return to camp for 60 shells. Unlock companions with earned shells.", UDim2.fromOffset(26, 87), UDim2.fromOffset(408, 127), 15)
+	label(welcome, "A woodland trail. A wild bond.", UDim2.fromOffset(26, 23), UDim2.fromOffset(408, 54), 26, mint)
+	label(welcome, "Take a hunt at the village board. Click / R2 to strike. Double-tap Space or press B / DODGE to evade. Slot 1 / L2 temporarily commands your companion.\n\nSlots 2–8 await learned class skills. Collect each crystal, then return to camp for 60 shells.", UDim2.fromOffset(26, 87), UDim2.fromOffset(408, 127), 15)
 	label(welcome, "Early prototype · progress resets when you leave.\nCompanions share combat strength. No purchases enabled.", UDim2.fromOffset(26, 219), UDim2.fromOffset(408, 37), 11, amber)
-	button(welcome, "Explore Greywater", UDim2.fromOffset(26, 266), UDim2.fromOffset(408, 34), function()
+	button(welcome, "Explore Greywater Reach", UDim2.fromOffset(26, 266), UDim2.fromOffset(408, 34), function()
 		welcome:Destroy()
 	end)
 	for _, child in welcome:GetDescendants() do
@@ -235,9 +307,19 @@ function Hud.start(command, catalog, rules)
 	end
 
 	local api = {}
+	function api:meleeAccepted(cooldown)
+		if destroyed then return end
+		attackReadyAt = os.clock() + (cooldown or rules.meleeCooldown)
+		refreshCooldowns()
+	end
 	function api:bondAccepted(cooldown)
 		if destroyed then return end
 		bondReadyAt = os.clock() + (cooldown or rules.petCooldown)
+		refreshCooldowns()
+	end
+	function api:dodgeAccepted(cooldown)
+		if destroyed then return end
+		dodgeReadyAt = os.clock() + (cooldown or dodgeRules.cooldown)
 		refreshCooldowns()
 	end
 	function api:render(state, message, success)
@@ -286,6 +368,7 @@ function Hud.start(command, catalog, rules)
 		toastVersion += 1
 		resizeConnection:Disconnect()
 		inputConnection:Disconnect()
+		ContextActionService:UnbindAction(spaceAction)
 		characterConnection:Disconnect()
 		if healthConnection then healthConnection:Disconnect() end
 		waypoint:Destroy()

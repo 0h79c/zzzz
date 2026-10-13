@@ -9,7 +9,7 @@ local Rules = require(ReplicatedStorage:WaitForChild("Wildbond"):WaitForChild("C
 
 type HuntState = Rules.HuntState
 type Definition = Rules.FoeDefinition
-type Actor = { character: Model, humanoid: Humanoid, root: BasePart }
+type Actor = { player: Player, character: Model, humanoid: Humanoid, root: BasePart }
 type Slam = { center: Vector3, radius: number, resolveAt: number, disc: Part }
 type Foe = {
 	definition: Definition,
@@ -34,6 +34,14 @@ type Foe = {
 	healthFill: Frame,
 	highlight: Highlight,
 	flashUntil: number,
+	home: Vector3,
+	facing: Vector3,
+	frames: { [BasePart]: CFrame },
+	state: string,
+	patrol: number,
+	nextMelee: number,
+	recoverUntil: number,
+	melee: { target: Actor, resolveAt: number }?,
 }
 
 local CombatService = {}
@@ -55,7 +63,30 @@ local function actor(player: Player): Actor?
 	if not humanoid or humanoid.Health <= 0 or not root or not root:IsA("BasePart") then
 		return nil
 	end
-	return { character = character, humanoid = humanoid, root = root }
+	return { player = player, character = character, humanoid = humanoid, root = root }
+end
+
+local function setState(foe: Foe, state: string, at: number, duration: number?)
+	if foe.state == state then return end
+	foe.state = state
+	foe.model:SetAttribute("State", state)
+	foe.model:SetAttribute("ActionStartedAt", at)
+	foe.model:SetAttribute("ActionDuration", duration or 0)
+end
+
+local function place(foe: Foe, position: Vector3, direction: Vector3)
+	local flat = Vector3.new(direction.X, 0, direction.Z)
+	if flat.Magnitude > 0.01 then foe.facing = flat.Unit end
+	local frame = CFrame.new(position) * CFrame.Angles(0, math.atan2(foe.facing.X, foe.facing.Z), 0)
+	for object, offset in foe.frames do
+		object.CFrame = frame * offset
+		object.Position = object.CFrame.Position -- Also keeps reflected/headless Instances consistent.
+	end
+	foe.model:SetAttribute("FacingDirection", foe.facing)
+end
+
+local function takeDamage(source: Actor, amount: number, at: number)
+	if Rules.canTakeDamage(at, source.character:GetAttribute("DodgeUntil")) then source.humanoid:TakeDamage(amount) end
 end
 
 local function part(
@@ -91,6 +122,11 @@ local function buildFoe(parent: Instance, definition: Definition, now: number): 
 	model.Parent = parent
 	local spawn = definition.position
 	local center = Vector3.new(spawn.x, spawn.y, spawn.z)
+	model:SetAttribute("HomePosition", center)
+	model:SetAttribute("State", "Patrol")
+	model:SetAttribute("ActionStartedAt", now)
+	model:SetAttribute("ActionDuration", 0)
+	model:SetAttribute("FacingDirection", Vector3.new(0, 0, 1))
 	local scale = if definition.boss then 1.4 else 1
 	local bark = if definition.id == "river" then Color3.fromRGB(80, 115, 117) else Color3.fromRGB(108, 86, 63)
 	local stone = if definition.boss then Color3.fromRGB(114, 119, 94) else Color3.fromRGB(143, 139, 112)
@@ -182,9 +218,11 @@ local function buildFoe(parent: Instance, definition: Definition, now: number): 
 	highlight.Enabled = false
 	highlight.Parent = model
 	local transparencies: { [BasePart]: number } = {}
+	local frames: { [BasePart]: CFrame } = {}
 	for _, object in model:GetDescendants() do
 		if object:IsA("BasePart") then
 			transparencies[object] = object.Transparency
+			frames[object] = CFrame.new(center):ToObjectSpace(object.CFrame)
 		end
 	end
 	return {
@@ -193,6 +231,8 @@ local function buildFoe(parent: Instance, definition: Definition, now: number): 
 		engaged = false, lastNearby = now, pattern = 0, nextSlam = math.huge,
 		respawnAt = nil, slam = nil, transparencies = transparencies,
 		label = label, healthText = healthText, healthFill = fill, highlight = highlight, flashUntil = 0,
+		home = center, facing = Vector3.new(0, 0, 1), frames = frames, state = "Patrol", patrol = 0,
+		nextMelee = now, recoverUntil = now, melee = nil,
 	}
 end
 
@@ -224,6 +264,7 @@ local function lineOfSight(source: Actor, foe: Foe): boolean
 	local parameters = RaycastParams.new()
 	parameters.FilterType = Enum.RaycastFilterType.Exclude
 	parameters.FilterDescendantsInstances = { source.character }
+	parameters.RespectCanCollide = true
 	local from = source.root.Position
 	local result = Workspace:Raycast(from, foe.root.Position - from, parameters)
 	return result == nil or result.Instance:IsDescendantOf(foe.model)
@@ -240,7 +281,7 @@ function CombatService.start(
 	local foes: { Foe } = {}
 	local lastAttack: { [Player]: number } = {}
 	local lastBond: { [Player]: number } = {}
-	local now = os.clock()
+	local now = Workspace:GetServerTimeNow()
 	for _, definition in Rules.foes do
 		table.insert(foes, buildFoe(folder, definition, now))
 	end
@@ -250,6 +291,8 @@ function CombatService.start(
 		foe.life += 1
 		foe.respawnAt = at + Rules.respawnDelay
 		clearSlam(foe) -- A killing blow during windup always cancels that slam.
+		foe.melee = nil
+		setState(foe, "Dead", at, 0.7)
 		foe.model:SetAttribute("Status", "Returning")
 		visible(foe, false)
 		for player, character in foe.contributors do
@@ -268,7 +311,8 @@ function CombatService.start(
 		local best = Rules.aggroRange * Rules.aggroRange
 		for _, player in Players:GetPlayers() do
 			local source = actor(player)
-			if source and Rules.eligible(getState(player), true, foe.definition.id) then
+			if source and Rules.eligible(getState(player), true, foe.definition.id)
+				and Rules.inRange(point(source.root.Position), point(foe.home), Rules.leashRadius) then
 				local distance = Rules.distanceSquared(point(source.root.Position), point(foe.root.Position))
 				if distance <= Rules.aggroRange * Rules.aggroRange and lineOfSight(source, foe) then
 					if distance <= best then nearest, best = source, distance end
@@ -281,7 +325,7 @@ function CombatService.start(
 	local function engage(foe: Foe, at: number)
 		if foe.engaged then return end
 		foe.engaged, foe.lastNearby = true, at
-		foe.nextSlam = at + Rules.firstSlamDelay
+		foe.nextSlam = if foe.definition.boss then at + Rules.firstSlamDelay else math.huge
 	end
 
 	local function reset(foe: Foe, at: number)
@@ -291,6 +335,9 @@ function CombatService.start(
 		foe.contributors, foe.respawnAt, foe.flashUntil, foe.pattern = {}, nil, 0, 0
 		foe.participants, foe.participantCount = {}, 0
 		foe.lastNearby, foe.nextSlam = at, math.huge
+		foe.melee, foe.nextMelee, foe.recoverUntil = nil, at, at
+		place(foe, foe.home, Vector3.new(0, 0, 1))
+		setState(foe, "Patrol", at)
 		foe.model:SetAttribute("PartySize", 1)
 		clearSlam(foe)
 		foe.model:SetAttribute("Status", "Ready")
@@ -319,7 +366,7 @@ function CombatService.start(
 		local selected: Foe? = nil
 		local best = radius * radius
 		for _, foe in foes do
-			if foe.alive and Rules.eligible(state, true, foe.definition.id) then
+			if foe.alive and foe.state ~= "Return" and Rules.eligible(state, true, foe.definition.id) then
 				local distance = Rules.distanceSquared(point(source.root.Position), point(foe.root.Position))
 				if distance <= best and lineOfSight(source, foe) then
 					selected, best = foe, distance
@@ -357,10 +404,51 @@ function CombatService.start(
 		text.Text = if burst then "RETREAT!" else "MOVE!"
 		text.Parent = sign
 		foe.slam = { center = center, radius = radius, resolveAt = at + pattern.windup, disc = disc }
+		foe.model:SetAttribute("AttackTarget", target.root.Position)
+		setState(foe, "SkillWindup", at, pattern.windup)
 		foe.model:SetAttribute("Status", "Windup")
 	end
 
-	local function update(at: number)
+	-- Short steering probes fit these flat clearings. Every candidate needs floor
+	-- and a clear body-width corridor; walls and cliff edges stop movement.
+	local function move(foe: Foe, goal: Vector3, speed: number, delta: number, players: { Player })
+		local offset = Vector3.new(goal.X - foe.root.Position.X, 0, goal.Z - foe.root.Position.Z)
+		if offset.Magnitude < 0.1 then return end
+		local step = math.min(speed * delta, offset.Magnitude)
+		local parameters = RaycastParams.new()
+		parameters.FilterType = Enum.RaycastFilterType.Exclude
+		local excluded: { Instance } = { folder }
+		for _, player in players do if player.Character then table.insert(excluded, player.Character) end end
+		parameters.FilterDescendantsInstances = excluded
+		parameters.RespectCanCollide = true
+		local width = if foe.definition.boss then 2.5 else 1.8
+		for _, angle in { 0, 45, -45, 90, -90, 135, -135, 180 } do
+			local direction = CFrame.Angles(0, math.rad(angle), 0):VectorToWorldSpace(offset.Unit)
+			local position = foe.root.Position + direction * step
+			local radius = if foe.state == "Patrol" then Rules.patrolRadius else Rules.leashRadius
+			if not Rules.inRange(point(position), point(foe.home), radius) then continue end
+			local side = Vector3.new(-direction.Z, 0, direction.X) * width
+			local clear = true
+			for _, sideOffset in { Vector3.zero, side, -side } do
+				local from = foe.root.Position + sideOffset
+				if Workspace:Raycast(from, direction * (step + width), parameters) then clear = false; break end
+				local floor = Workspace:Raycast(position + sideOffset + Vector3.new(0, 2, 0), Vector3.new(0, -9, 0), parameters)
+				if not floor or math.abs(floor.Position.Y - Rules.groundHeight) > 1.25 then clear = false; break end
+			end
+			if clear then place(foe, position, direction); return end
+		end
+	end
+
+	local function beginMelee(foe: Foe, target: Actor, at: number)
+		place(foe, foe.root.Position, target.root.Position - foe.root.Position)
+		foe.melee = { target = target, resolveAt = at + Rules.enemyMeleeWindup }
+		foe.nextMelee = at + (if foe.definition.boss then Rules.bossMeleeCooldown else Rules.enemyMeleeCooldown)
+		foe.model:SetAttribute("AttackTarget", target.root.Position)
+		setState(foe, "MeleeWindup", at, Rules.enemyMeleeWindup)
+		foe.model:SetAttribute("Status", "Windup")
+	end
+
+	local function update(at: number, delta: number)
 		if destroyed then
 			return
 		end
@@ -372,36 +460,71 @@ function CombatService.start(
 				end
 				continue
 			end
+			if foe.state == "Return" then
+				if (foe.root.Position - foe.home).Magnitude <= 0.8 then reset(foe, at)
+				else move(foe, foe.home, Rules.chaseSpeed, delta, players) end
+				continue
+			end
 			local nearest = nearestPlayer(foe)
 			if nearest then
 				engage(foe, at)
 				foe.lastNearby = at
 			elseif foe.engaged and at >= foe.lastNearby + Rules.encounterResetDelay then
-				reset(foe, at)
+				clearSlam(foe)
+				foe.melee = nil
+				setState(foe, "Return", at)
+				foe.model:SetAttribute("Status", "Returning")
+				continue
 			end
 			local slam = foe.slam
 			if slam and at >= slam.resolveAt then
 				for _, player in players do
 					local source = actor(player)
 					if source and Rules.eligible(getState(player), true, foe.definition.id)
-						and Rules.inSlam(point(source.root.Position), point(slam.center), slam.radius) then
-						source.humanoid:TakeDamage(foe.definition.slamDamage)
+						and Rules.inSlam(point(source.root.Position), point(slam.center), slam.radius) and lineOfSight(source, foe) then
+						takeDamage(source, foe.definition.slamDamage, at)
 					end
 				end
 				clearSlam(foe)
 				foe.nextSlam = at + Rules.slamCooldown
+				foe.recoverUntil = at + Rules.enemyMeleeRecover
+				setState(foe, "MeleeRecover", at, Rules.enemyMeleeRecover)
 				foe.model:SetAttribute("Status", "Ready")
-			elseif not slam and at >= foe.nextSlam then
+			end
+			local melee = foe.melee
+			if melee and at >= melee.resolveAt then
+				local target = actor(melee.target.player)
+				if target and target.character == melee.target.character and Rules.eligible(getState(target.player), true, foe.definition.id)
+					and Rules.inEnemyMelee(point(target.root.Position), point(foe.root.Position), point(foe.facing))
+					and lineOfSight(target, foe) then takeDamage(target, foe.definition.meleeDamage, at) end
+				foe.melee = nil
+				foe.recoverUntil = at + Rules.enemyMeleeRecover
+				setState(foe, "MeleeRecover", at, Rules.enemyMeleeRecover)
+				foe.model:SetAttribute("Status", "Ready")
+			end
+			if not foe.slam and not foe.melee and at >= foe.recoverUntil then
 				if nearest then
-					beginSlam(foe, nearest, at)
+					if at >= foe.nextSlam then beginSlam(foe, nearest, at)
+					elseif Rules.inRange(point(nearest.root.Position), point(foe.root.Position), Rules.enemyMeleeRange) then
+						if at >= foe.nextMelee then beginMelee(foe, nearest, at) end
+					else
+						setState(foe, "Chase", at)
+						move(foe, nearest.root.Position, Rules.chaseSpeed, delta, players)
+					end
+				else
+					setState(foe, "Patrol", at)
+					local phase = foe.patrol * 2.4 + foe.home.X
+					local goal = foe.home + Vector3.new(math.sin(phase), 0, math.cos(phase)) * Rules.patrolRadius * 0.75
+					if (foe.root.Position - goal).Magnitude < 0.6 then foe.patrol += 1 end
+					move(foe, goal, Rules.patrolSpeed, delta, players)
 				end
 			end
 			local flashing = at < foe.flashUntil
-			foe.highlight.Enabled = flashing or foe.slam ~= nil
+			foe.highlight.Enabled = flashing or foe.slam ~= nil or foe.melee ~= nil
 			if flashing then
 				foe.highlight.FillColor = Color3.fromRGB(255, 246, 221)
 				foe.highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
-			elseif foe.slam then
+			elseif foe.slam or foe.melee then
 				foe.highlight.FillColor = Color3.fromRGB(255, 99, 55)
 				foe.highlight.OutlineColor = Color3.fromRGB(255, 170, 75)
 			end
@@ -412,8 +535,9 @@ function CombatService.start(
 	local heartbeat = RunService.Heartbeat:Connect(function(delta: number)
 		accumulated += delta
 		if accumulated >= 0.1 then
+			local elapsed = math.min(accumulated, 0.2)
 			accumulated = 0
-			update(os.clock())
+			update(Workspace:GetServerTimeNow(), elapsed)
 		end
 	end)
 	local leaving = Players.PlayerRemoving:Connect(function(player: Player)
@@ -425,37 +549,36 @@ function CombatService.start(
 	end)
 
 	local service = {}
-	function service.attack(player: Player): (boolean, string)
+	function service.attack(player: Player): (boolean, string, Vector3?)
 		if destroyed then
-			return false, "Combat is unavailable."
+			return false, "Combat is unavailable.", nil
 		end
 		local source = actor(player)
 		if not source then
-			return false, "Wait until your character is ready."
+			return false, "Wait until your character is ready.", nil
 		end
 		local state = getState(player)
-		if not state or not state.active then
-			return false, "Start an expedition at camp first."
-		end
-		local at = os.clock()
+		local at = Workspace:GetServerTimeNow()
 		if not Rules.cooldownReady(at, lastAttack[player], Rules.meleeCooldown) then
-			return false, "Your next swing is not ready yet."
+			return false, "Your next swing is not ready yet.", nil
 		end
 		lastAttack[player] = at
+		local ahead = source.root.Position + source.root.CFrame.LookVector * 6
+		if not state or not state.active then return true, "Practice swing.", ahead end
 		local selected = selectFoe(source, state, Rules.meleeRange)
 		if not selected then
-			return false, "Move closer to an unfinished guardian."
+			return true, "Swing.", ahead
 		end
 		damage(selected, player, source, Rules.meleeDamage, at)
 		if selected.health <= 0 then
-			return true, selected.definition.name .. " defeated!"
+			return true, selected.definition.name .. " defeated!", selected.root.Position
 		end
-		return true, selected.definition.name .. ": " .. tostring(selected.health) .. " HP"
+		return true, selected.definition.name .. ": " .. tostring(selected.health) .. " HP", selected.root.Position
 	end
 
 	function service.cooldown(player: Player): number
 		local previous = lastBond[player]
-		return if previous then math.max(0, previous + Rules.petCooldown - os.clock()) else 0
+		return if previous then math.max(0, previous + Rules.petCooldown - Workspace:GetServerTimeNow()) else 0
 	end
 
 	function service.bond(player: Player): (boolean, string)
@@ -464,7 +587,7 @@ function CombatService.start(
 		if not source then return false, "Wait until your character is ready." end
 		if not state or not state.active then return false, "Start an expedition at camp first." end
 		if not Rules.canBond(state) then return false, "Equip a companion you own first." end
-		local at = os.clock()
+		local at = Workspace:GetServerTimeNow()
 		if not Rules.cooldownReady(at, lastBond[player], Rules.petCooldown) then
 			return false, "Your companion is catching its breath."
 		end
@@ -475,14 +598,14 @@ function CombatService.start(
 		local life, character, equipped, defeated = selected.life, source.character, state.equipped, state.defeated
 		local equipRevision = state.equipRevision
 		task.delay(Rules.petWindup, function()
-			if destroyed or not selected.alive or selected.life ~= life then return end
+			if destroyed or not selected.alive or selected.life ~= life or selected.state == "Return" then return end
 			local current, currentState = actor(player), getState(player)
 			if not current or current.character ~= character or currentState ~= state
 				or currentState.defeated ~= defeated or currentState.equipped ~= equipped or currentState.equipRevision ~= equipRevision
 				or not Rules.canBond(currentState) or not Rules.eligible(currentState, true, selected.definition.id)
 				or not Rules.inRange(point(current.root.Position), point(selected.root.Position), Rules.petRange)
 				or not lineOfSight(current, selected) then return end
-			damage(selected, player, current, Rules.petDamage, os.clock())
+			damage(selected, player, current, Rules.petDamage, Workspace:GetServerTimeNow())
 		end)
 		if onBondFx then onBondFx(player, selected.root.Position) end
 		return true, "Companion strike!"

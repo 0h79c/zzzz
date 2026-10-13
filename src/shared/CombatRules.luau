@@ -13,6 +13,7 @@ export type FoeDefinition = {
 	name: string,
 	position: Point,
 	maxHealth: number,
+	meleeDamage: number,
 	slamDamage: number,
 	slamRadius: number,
 	windup: number,
@@ -29,8 +30,17 @@ CombatRules.petCooldown = 3.2
 CombatRules.petWindup = 0.3
 CombatRules.aggroRange = 22
 CombatRules.rewardRange = 40
-CombatRules.slamCooldown = 2.4
-CombatRules.firstSlamDelay = 0.8
+CombatRules.slamCooldown = 5
+CombatRules.firstSlamDelay = 2.8
+CombatRules.patrolRadius = 12
+CombatRules.leashRadius = 28
+CombatRules.patrolSpeed = 3.5
+CombatRules.chaseSpeed = 7
+CombatRules.enemyMeleeRange = 5
+CombatRules.enemyMeleeWindup = 0.65
+CombatRules.enemyMeleeRecover = 0.28
+CombatRules.enemyMeleeCooldown = 1.2
+CombatRules.bossMeleeCooldown = 1.5
 CombatRules.respawnDelay = 6
 CombatRules.encounterResetDelay = 10
 CombatRules.maxGroupSize = 4
@@ -42,15 +52,15 @@ CombatRules.groundHeight = 4.1
 local foes: { FoeDefinition } = {
 	{
 		id = "moss", name = "Bramble Sprout", position = { x = -45, y = 7, z = -17 },
-		maxHealth = 140, slamDamage = 12, slamRadius = 5, windup = 0.9, boss = false,
+		maxHealth = 140, meleeDamage = 8, slamDamage = 12, slamRadius = 5, windup = 0.9, boss = false,
 	},
 	{
 		id = "river", name = "Reed Guardian", position = { x = 0, y = 7, z = -57 },
-		maxHealth = 200, slamDamage = 16, slamRadius = 5, windup = 1.0, boss = false,
+		maxHealth = 200, meleeDamage = 10, slamDamage = 16, slamRadius = 5, windup = 1.0, boss = false,
 	},
 	{
 		id = "ruins", name = "The Hollow Crown", position = { x = 65, y = 8, z = -72 },
-		maxHealth = 600, slamDamage = 22, slamRadius = 7, windup = 1.2, boss = true,
+		maxHealth = 600, meleeDamage = 12, slamDamage = 22, slamRadius = 7, windup = 1.2, boss = true,
 	},
 }
 local knownIds: { [string]: boolean } = {}
@@ -83,6 +93,19 @@ function CombatRules.cooldownReady(now: number, previous: number?, cooldown: num
 		return true
 	end
 	return finite(previous) and now >= previous and now >= previous + cooldown
+end
+
+-- A committed swing checks a short front arc, not a radius around the enemy.
+function CombatRules.inEnemyMelee(target: Point, origin: Point, facing: Point): boolean
+	if not CombatRules.inRange(target, origin, CombatRules.enemyMeleeRange) then return false end
+	local dx, dz = target.x - origin.x, target.z - origin.z
+	local distance = math.sqrt(dx * dx + dz * dz)
+	local length = math.sqrt(facing.x * facing.x + facing.z * facing.z)
+	return finite(length) and length > 0 and (distance < 0.01 or (dx * facing.x + dz * facing.z) / (distance * length) >= 0.25)
+end
+
+function CombatRules.canTakeDamage(now: number, dodgeUntil: any): boolean
+	return finite(now) and (typeof(dodgeUntil) ~= "number" or not finite(dodgeUntil) or now >= dodgeUntil)
 end
 
 -- Companions are collection choices: spending shells never buys stronger combat.

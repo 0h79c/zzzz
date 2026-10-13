@@ -58,7 +58,7 @@ for index, id in { "start", "return", "moss", "river", "ruins" } do
 		Parent = { Position = Vector3.new(index * 20, 0, 0), IsA = function(_, class) return class == "BasePart" end },
 	}
 end
-local tokens = { Expedition = {}, HuntMetrics = {}, CombatRules = {}, WorldBuilder = {}, CombatService = {} }
+local tokens = { Expedition = {}, HuntMetrics = {}, CombatRules = {}, DodgeRules = {}, WorldBuilder = {}, CombatService = {}, DodgeService = {} }
 local shared = { WaitForChild = function(_, name) return assert(tokens[name], name) end }
 local remotes = {}
 local instances = { new = function(class)
@@ -74,20 +74,41 @@ local instances = { new = function(class)
 end }
 local getState, defeated, bondEffect, closed
 local attacks, bonds, destroyed = 0, 0, 0
+local dodges, dodgeDestroyed, dodgeInputs = 0, 0, {}
+local swingAllowed = true
+local swingTarget = Vector3.new(6, 7, 9)
+local dodgeDirection = Vector3.new(1, 0, 0)
 local combat = {
-	attack = function(value) assert(getState(value)); attacks += 1; return true end,
+	attack = function(value)
+		assert(getState(value))
+		if not swingAllowed then return false, "Your next swing is not ready yet." end
+		attacks += 1
+		return true, "Swing!", swingTarget
+	end,
 	bond = function(value) assert(getState(value)); bonds += 1; return true end,
 	destroy = function() destroyed += 1 end,
+}
+local dodge = {
+	dodge = function(value, payload)
+		assert(getState(value))
+		table.insert(dodgeInputs, { player = value, payload = payload })
+		if typeof(payload) ~= "Vector3" then return false, "Invalid dodge." end
+		dodges += 1
+		return true, "Dodge!", dodgeDirection
+	end,
+	destroy = function() dodgeDestroyed += 1 end,
 }
 local modules = {
 	[tokens.Expedition] = Expedition,
 	[tokens.HuntMetrics] = HuntMetrics,
 	[tokens.CombatRules] = CombatRules,
+	[tokens.DodgeRules] = require("../src/shared/DodgeRules"),
 	[tokens.WorldBuilder] = { build = function() return { prompts = prompts } end },
 	[tokens.CombatService] = { start = function(stateCallback, defeatCallback, effectCallback)
 		getState, defeated, bondEffect = stateCallback, defeatCallback, effectCallback
 		return combat
 	end },
+	[tokens.DodgeService] = { start = function() return dodge end },
 }
 luau.load(fs.readFile("src/server/init.server.luau"), {
 	debugName = "init.server",
@@ -151,17 +172,32 @@ check(latest(hunter)[3] == false and health.Health == 40, "Rejected active-hunt 
 now = 3
 command.OnServerEvent:Fire(hunter, "attack")
 command.OnServerEvent:Fire(hunter, "bond")
+command.OnServerEvent:Fire(hunter, "dodge", Vector3.new(0, 0, -1))
 command.OnServerEvent:Fire(hunter, "sync")
 check(attacks == 1 and bonds == 1 and latest(hunter)[1].timing.elapsed == 1, "Attack, bond and sync use independent rate limits at the same instant")
+check(dodges == 1 and effect.calls[1].args[1] == "melee" and effect.calls[1].args[2] == swingTarget, "Accepted melee routes the server-selected cosmetic swing position")
+check(effect.calls[2].player == hunter and effect.calls[2].args[1] == "dodge" and effect.calls[2].args[2] == dodgeDirection, "Dodge uses its independent command interval and server-authorized effect direction")
+check(health.Health == 40 and getState(hunter).shells == 0 and not getState(hunter).defeated.moss, "Movement and cosmetic attacks cannot heal or award progression")
 command.OnServerEvent:Fire(hunter, "attack")
 command.OnServerEvent:Fire(hunter, "bond")
+command.OnServerEvent:Fire(hunter, "dodge", Vector3.new(0, 0, -1))
 check(attacks == 1 and bonds == 1, "Repeated commands remain throttled within their action")
+check(dodges == 1 and #dodgeInputs == 1 and #effect.calls == 2, "Repeated dodge never reaches the movement service or creates an effect")
 now = 3.11
 command.OnServerEvent:Fire(hunter, "attack")
 command.OnServerEvent:Fire(hunter, "bond")
 check(attacks == 2 and bonds == 2, "Each combat command resumes after its own interval")
 bondEffect(hunter, Vector3.new(5, 7, 9))
-check(#effect.calls == 1 and effect.calls[1].player == hunter and effect.calls[1].args[1] == "bond", "Server combat effects route to the correct client")
+local bondCall = effect.calls[#effect.calls]
+check(bondCall.player == hunter and bondCall.args[1] == "bond", "Server combat effects route to the correct client")
+now, swingAllowed = 3.25, false
+local beforeRejected = #effect.calls
+command.OnServerEvent:Fire(hunter, "attack")
+check(attacks == 2 and #effect.calls == beforeRejected, "Rejected melee never plays a success effect")
+local malformedDodge = { x = 1, y = 0, z = 0, freeReward = 9999 }
+command.OnServerEvent:Fire(hunter, "dodge", malformedDodge)
+check(#dodgeInputs == 2 and dodgeInputs[2].player == hunter and dodgeInputs[2].payload == malformedDodge, "Untyped direction payload reaches the authoritative movement validator unchanged")
+check(latest(hunter)[3] == false and #effect.calls == beforeRejected and health.Health == 40 and getState(hunter).shells == 0, "Rejected dodge reports failure without an effect, healing or rewards")
 now = 3.5
 command.OnServerEvent:Fire(hunter, "unlock", "emberfox")
 check(latest(hunter)[3] == false and not latest(hunter)[1].owned.emberfox and latest(hunter)[1].shells == 0, "Server enforces companion price without charging insufficient funds")
@@ -216,7 +252,9 @@ defeated(hunter, "ruins")
 prompts.start.Triggered:Fire(hunter)
 command.OnServerEvent:Fire(hunter, "sync")
 command.OnServerEvent:Fire(hunter, "attack")
+command.OnServerEvent:Fire(hunter, "dodge", Vector3.new(0, 0, -1))
 check(#update.calls == sent and attacks == 2, "Late death, defeat, prompt and command events safely ignore a departed player")
+check(#dodgeInputs == 2 and dodges == 1, "Departed players cannot reach the dodge service")
 players.PlayerAdded:Fire(hunter)
 hunter.Parent = players
 now = 37
@@ -224,4 +262,5 @@ command.OnServerEvent:Fire(hunter, "sync")
 check(latest(hunter)[1].shells == 0 and latest(hunter)[1].timing.lastDuration == nil and latest(hunter)[1].timing.deaths == 0, "A new session has no leaked metrics or rewards")
 closed()
 check(destroyed == 1, "Server shutdown destroys the combat service")
+check(dodgeDestroyed == 1, "Server shutdown also destroys active movement service state")
 print("Server wiring: " .. checks .. " entrypoint/rules checks passed; Roblox signals, networking and physics remain untested")

@@ -25,6 +25,7 @@ export type FoeDefinition = {
 	name: string,
 	position: Point,
 	maxHealth: number,
+	meleeDamage: number,
 	slamDamage: number,
 	slamRadius: number,
 	windup: number,
@@ -41,8 +42,17 @@ CombatRules.petCooldown = 3.2
 CombatRules.petWindup = 0.3
 CombatRules.aggroRange = 22
 CombatRules.rewardRange = 40
-CombatRules.slamCooldown = 2.4
-CombatRules.firstSlamDelay = 0.8
+CombatRules.slamCooldown = 5
+CombatRules.firstSlamDelay = 2.8
+CombatRules.patrolRadius = 12
+CombatRules.leashRadius = 28
+CombatRules.patrolSpeed = 3.5
+CombatRules.chaseSpeed = 7
+CombatRules.enemyMeleeRange = 5
+CombatRules.enemyMeleeWindup = 0.65
+CombatRules.enemyMeleeRecover = 0.28
+CombatRules.enemyMeleeCooldown = 1.2
+CombatRules.bossMeleeCooldown = 1.5
 CombatRules.respawnDelay = 6
 CombatRules.encounterResetDelay = 10
 CombatRules.maxGroupSize = 4
@@ -54,15 +64,15 @@ CombatRules.groundHeight = 4.1
 local foes: { FoeDefinition } = {
 	{
 		id = "moss", name = "Bramble Sprout", position = { x = -45, y = 7, z = -17 },
-		maxHealth = 140, slamDamage = 12, slamRadius = 5, windup = 0.9, boss = false,
+		maxHealth = 140, meleeDamage = 8, slamDamage = 12, slamRadius = 5, windup = 0.9, boss = false,
 	},
 	{
 		id = "river", name = "Reed Guardian", position = { x = 0, y = 7, z = -57 },
-		maxHealth = 200, slamDamage = 16, slamRadius = 5, windup = 1.0, boss = false,
+		maxHealth = 200, meleeDamage = 10, slamDamage = 16, slamRadius = 5, windup = 1.0, boss = false,
 	},
 	{
 		id = "ruins", name = "The Hollow Crown", position = { x = 65, y = 8, z = -72 },
-		maxHealth = 600, slamDamage = 22, slamRadius = 7, windup = 1.2, boss = true,
+		maxHealth = 600, meleeDamage = 12, slamDamage = 22, slamRadius = 7, windup = 1.2, boss = true,
 	},
 }
 local knownIds: { [string]: boolean } = {}
@@ -95,6 +105,19 @@ function CombatRules.cooldownReady(now: number, previous: number?, cooldown: num
 		return true
 	end
 	return finite(previous) and now >= previous and now >= previous + cooldown
+end
+
+-- A committed swing checks a short front arc, not a radius around the enemy.
+function CombatRules.inEnemyMelee(target: Point, origin: Point, facing: Point): boolean
+	if not CombatRules.inRange(target, origin, CombatRules.enemyMeleeRange) then return false end
+	local dx, dz = target.x - origin.x, target.z - origin.z
+	local distance = math.sqrt(dx * dx + dz * dz)
+	local length = math.sqrt(facing.x * facing.x + facing.z * facing.z)
+	return finite(length) and length > 0 and (distance < 0.01 or (dx * facing.x + dz * facing.z) / (distance * length) >= 0.25)
+end
+
+function CombatRules.canTakeDamage(now: number, dodgeUntil: any): boolean
+	return finite(now) and (typeof(dodgeUntil) ~= "number" or not finite(dodgeUntil) or now >= dodgeUntil)
 end
 
 -- Companions are collection choices: spending shells never buys stronger combat.
@@ -148,6 +171,45 @@ return table.freeze(CombatRules)
         </Properties>
       </Item>
       <Item class="ModuleScript" referent="3">
+        <Properties>
+          <string name="Name">DodgeRules</string>
+          <string name="Source"><![CDATA[--!strict
+local DodgeRules = {
+	distance = 8,
+	duration = 0.22,
+	invulnerabilityDuration = 0.18,
+	cooldown = 4,
+	doubleTapWindow = 0.28,
+	collisionMargin = 1.25,
+}
+
+export type Point = { x: number, y: number, z: number }
+
+local function finite(value: any): boolean
+	return typeof(value) == "number" and value == value and math.abs(value) < math.huge
+end
+
+function DodgeRules.direction(point: any): Point?
+	if typeof(point) ~= "table" or not finite(point.x) or not finite(point.y) or not finite(point.z) then
+		return nil
+	end
+	local length = point.x * point.x + point.z * point.z
+	if math.abs(point.y) > 0.15 or length < 0.01 or length > 2.25 then
+		return nil
+	end
+	local scale = math.sqrt(length)
+	return { x = point.x / scale, y = 0, z = point.z / scale }
+end
+
+function DodgeRules.ready(now: number, previous: number?): boolean
+	return finite(now) and (previous == nil or (finite(previous) and now >= previous + DodgeRules.cooldown))
+end
+
+return table.freeze(DodgeRules)
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="4">
         <Properties>
           <string name="Name">Expedition</string>
           <string name="Source"><![CDATA[--!strict
@@ -321,7 +383,7 @@ return table.freeze(Expedition)
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="4">
+      <Item class="ModuleScript" referent="5">
         <Properties>
           <string name="Name">HuntMetrics</string>
           <string name="Source"><![CDATA[--!strict
@@ -389,11 +451,11 @@ return table.freeze(HuntMetrics)
       </Item>
     </Item>
   </Item>
-  <Item class="ServerScriptService" referent="5">
+  <Item class="ServerScriptService" referent="6">
     <Properties>
       <string name="Name">ServerScriptService</string>
     </Properties>
-    <Item class="Script" referent="6">
+    <Item class="Script" referent="7">
       <Properties>
         <string name="Name">WildbondServer</string>
         <token name="RunContext">0</token>
@@ -407,6 +469,7 @@ local CombatRules = require(shared:WaitForChild("CombatRules"))
 local HuntMetrics = require(shared:WaitForChild("HuntMetrics"))
 local WorldBuilder = require(script:WaitForChild("WorldBuilder"))
 local CombatService = require(script:WaitForChild("CombatService"))
+local DodgeService = require(script:WaitForChild("DodgeService"))
 local world = WorldBuilder.build()
 
 local remotes = Instance.new("Folder")
@@ -427,7 +490,7 @@ local sessions = {}
 local measurements = {}
 local lastCommand = {}
 local lastPrompt = {}
-local actionIntervals = { sync = 1, attack = 0.1, bond = 0.1, unlock = 0.25, equip = 0.25 }
+local actionIntervals = { sync = 1, attack = 0.1, bond = 0.1, dodge = 0.1, unlock = 0.25, equip = 0.25 }
 
 local function send(player, message, success)
 	local state = sessions[player]
@@ -451,6 +514,7 @@ end, function(player, id)
 end, function(player, targetPosition)
 	effect:FireClient(player, "bond", targetPosition)
 end)
+local dodging = DodgeService.start()
 
 local function addPlayer(player)
 	if sessions[player] then
@@ -530,7 +594,7 @@ for id, prompt in world.prompts do
 	end)
 end
 
-command.OnServerEvent:Connect(function(player, action, petId)
+command.OnServerEvent:Connect(function(player, action, payload)
 	if typeof(action) ~= "string" or #action > 20 then
 		return
 	end
@@ -553,7 +617,10 @@ command.OnServerEvent:Connect(function(player, action, petId)
 	if action == "sync" then
 		send(player)
 	elseif action == "attack" then
-		local success, message = combat.attack(player)
+		local success, message, targetPosition = combat.attack(player)
+		if success and typeof(targetPosition) == "Vector3" then
+			effect:FireClient(player, "melee", targetPosition)
+		end
 		-- Quiet successful swings; keep mission text visible during combat.
 		if not success and message ~= "Your next swing is not ready yet." then
 			send(player, message, false)
@@ -561,7 +628,12 @@ command.OnServerEvent:Connect(function(player, action, petId)
 	elseif action == "bond" then
 		local success, message = combat.bond(player)
 		if not success then send(player, message, false) end
+	elseif action == "dodge" then
+		local success, message, direction = dodging.dodge(player, payload)
+		if success then effect:FireClient(player, "dodge", direction)
+		else send(player, message, false) end
 	elseif action == "unlock" or action == "equip" then
+		local petId = payload
 		if typeof(petId) ~= "string" or #petId > 32 then
 			return
 		end
@@ -572,12 +644,13 @@ end)
 
 game:BindToClose(function()
 	combat.destroy()
+	dodging.destroy()
 end)
 
-print("Wildbond alpha ready: measured hunts, server pet strikes and guardians; purchases disabled.")
+print("Wildbond alpha ready: roaming foes, animated attacks and server dodges; purchases disabled.")
 ]]></string>
       </Properties>
-      <Item class="ModuleScript" referent="7">
+      <Item class="ModuleScript" referent="8">
         <Properties>
           <string name="Name">CombatService</string>
           <string name="Source"><![CDATA[--!strict
@@ -591,7 +664,7 @@ local Rules = require(ReplicatedStorage:WaitForChild("Wildbond"):WaitForChild("C
 
 type HuntState = Rules.HuntState
 type Definition = Rules.FoeDefinition
-type Actor = { character: Model, humanoid: Humanoid, root: BasePart }
+type Actor = { player: Player, character: Model, humanoid: Humanoid, root: BasePart }
 type Slam = { center: Vector3, radius: number, resolveAt: number, disc: Part }
 type Foe = {
 	definition: Definition,
@@ -616,6 +689,14 @@ type Foe = {
 	healthFill: Frame,
 	highlight: Highlight,
 	flashUntil: number,
+	home: Vector3,
+	facing: Vector3,
+	frames: { [BasePart]: CFrame },
+	state: string,
+	patrol: number,
+	nextMelee: number,
+	recoverUntil: number,
+	melee: { target: Actor, resolveAt: number }?,
 }
 
 local CombatService = {}
@@ -637,7 +718,30 @@ local function actor(player: Player): Actor?
 	if not humanoid or humanoid.Health <= 0 or not root or not root:IsA("BasePart") then
 		return nil
 	end
-	return { character = character, humanoid = humanoid, root = root }
+	return { player = player, character = character, humanoid = humanoid, root = root }
+end
+
+local function setState(foe: Foe, state: string, at: number, duration: number?)
+	if foe.state == state then return end
+	foe.state = state
+	foe.model:SetAttribute("State", state)
+	foe.model:SetAttribute("ActionStartedAt", at)
+	foe.model:SetAttribute("ActionDuration", duration or 0)
+end
+
+local function place(foe: Foe, position: Vector3, direction: Vector3)
+	local flat = Vector3.new(direction.X, 0, direction.Z)
+	if flat.Magnitude > 0.01 then foe.facing = flat.Unit end
+	local frame = CFrame.new(position) * CFrame.Angles(0, math.atan2(foe.facing.X, foe.facing.Z), 0)
+	for object, offset in foe.frames do
+		object.CFrame = frame * offset
+		object.Position = object.CFrame.Position -- Also keeps reflected/headless Instances consistent.
+	end
+	foe.model:SetAttribute("FacingDirection", foe.facing)
+end
+
+local function takeDamage(source: Actor, amount: number, at: number)
+	if Rules.canTakeDamage(at, source.character:GetAttribute("DodgeUntil")) then source.humanoid:TakeDamage(amount) end
 end
 
 local function part(
@@ -673,6 +777,11 @@ local function buildFoe(parent: Instance, definition: Definition, now: number): 
 	model.Parent = parent
 	local spawn = definition.position
 	local center = Vector3.new(spawn.x, spawn.y, spawn.z)
+	model:SetAttribute("HomePosition", center)
+	model:SetAttribute("State", "Patrol")
+	model:SetAttribute("ActionStartedAt", now)
+	model:SetAttribute("ActionDuration", 0)
+	model:SetAttribute("FacingDirection", Vector3.new(0, 0, 1))
 	local scale = if definition.boss then 1.4 else 1
 	local bark = if definition.id == "river" then Color3.fromRGB(80, 115, 117) else Color3.fromRGB(108, 86, 63)
 	local stone = if definition.boss then Color3.fromRGB(114, 119, 94) else Color3.fromRGB(143, 139, 112)
@@ -764,9 +873,11 @@ local function buildFoe(parent: Instance, definition: Definition, now: number): 
 	highlight.Enabled = false
 	highlight.Parent = model
 	local transparencies: { [BasePart]: number } = {}
+	local frames: { [BasePart]: CFrame } = {}
 	for _, object in model:GetDescendants() do
 		if object:IsA("BasePart") then
 			transparencies[object] = object.Transparency
+			frames[object] = CFrame.new(center):ToObjectSpace(object.CFrame)
 		end
 	end
 	return {
@@ -775,6 +886,8 @@ local function buildFoe(parent: Instance, definition: Definition, now: number): 
 		engaged = false, lastNearby = now, pattern = 0, nextSlam = math.huge,
 		respawnAt = nil, slam = nil, transparencies = transparencies,
 		label = label, healthText = healthText, healthFill = fill, highlight = highlight, flashUntil = 0,
+		home = center, facing = Vector3.new(0, 0, 1), frames = frames, state = "Patrol", patrol = 0,
+		nextMelee = now, recoverUntil = now, melee = nil,
 	}
 end
 
@@ -806,6 +919,7 @@ local function lineOfSight(source: Actor, foe: Foe): boolean
 	local parameters = RaycastParams.new()
 	parameters.FilterType = Enum.RaycastFilterType.Exclude
 	parameters.FilterDescendantsInstances = { source.character }
+	parameters.RespectCanCollide = true
 	local from = source.root.Position
 	local result = Workspace:Raycast(from, foe.root.Position - from, parameters)
 	return result == nil or result.Instance:IsDescendantOf(foe.model)
@@ -822,7 +936,7 @@ function CombatService.start(
 	local foes: { Foe } = {}
 	local lastAttack: { [Player]: number } = {}
 	local lastBond: { [Player]: number } = {}
-	local now = os.clock()
+	local now = Workspace:GetServerTimeNow()
 	for _, definition in Rules.foes do
 		table.insert(foes, buildFoe(folder, definition, now))
 	end
@@ -832,6 +946,8 @@ function CombatService.start(
 		foe.life += 1
 		foe.respawnAt = at + Rules.respawnDelay
 		clearSlam(foe) -- A killing blow during windup always cancels that slam.
+		foe.melee = nil
+		setState(foe, "Dead", at, 0.7)
 		foe.model:SetAttribute("Status", "Returning")
 		visible(foe, false)
 		for player, character in foe.contributors do
@@ -850,7 +966,8 @@ function CombatService.start(
 		local best = Rules.aggroRange * Rules.aggroRange
 		for _, player in Players:GetPlayers() do
 			local source = actor(player)
-			if source and Rules.eligible(getState(player), true, foe.definition.id) then
+			if source and Rules.eligible(getState(player), true, foe.definition.id)
+				and Rules.inRange(point(source.root.Position), point(foe.home), Rules.leashRadius) then
 				local distance = Rules.distanceSquared(point(source.root.Position), point(foe.root.Position))
 				if distance <= Rules.aggroRange * Rules.aggroRange and lineOfSight(source, foe) then
 					if distance <= best then nearest, best = source, distance end
@@ -863,7 +980,7 @@ function CombatService.start(
 	local function engage(foe: Foe, at: number)
 		if foe.engaged then return end
 		foe.engaged, foe.lastNearby = true, at
-		foe.nextSlam = at + Rules.firstSlamDelay
+		foe.nextSlam = if foe.definition.boss then at + Rules.firstSlamDelay else math.huge
 	end
 
 	local function reset(foe: Foe, at: number)
@@ -873,6 +990,9 @@ function CombatService.start(
 		foe.contributors, foe.respawnAt, foe.flashUntil, foe.pattern = {}, nil, 0, 0
 		foe.participants, foe.participantCount = {}, 0
 		foe.lastNearby, foe.nextSlam = at, math.huge
+		foe.melee, foe.nextMelee, foe.recoverUntil = nil, at, at
+		place(foe, foe.home, Vector3.new(0, 0, 1))
+		setState(foe, "Patrol", at)
 		foe.model:SetAttribute("PartySize", 1)
 		clearSlam(foe)
 		foe.model:SetAttribute("Status", "Ready")
@@ -901,7 +1021,7 @@ function CombatService.start(
 		local selected: Foe? = nil
 		local best = radius * radius
 		for _, foe in foes do
-			if foe.alive and Rules.eligible(state, true, foe.definition.id) then
+			if foe.alive and foe.state ~= "Return" and Rules.eligible(state, true, foe.definition.id) then
 				local distance = Rules.distanceSquared(point(source.root.Position), point(foe.root.Position))
 				if distance <= best and lineOfSight(source, foe) then
 					selected, best = foe, distance
@@ -939,10 +1059,51 @@ function CombatService.start(
 		text.Text = if burst then "RETREAT!" else "MOVE!"
 		text.Parent = sign
 		foe.slam = { center = center, radius = radius, resolveAt = at + pattern.windup, disc = disc }
+		foe.model:SetAttribute("AttackTarget", target.root.Position)
+		setState(foe, "SkillWindup", at, pattern.windup)
 		foe.model:SetAttribute("Status", "Windup")
 	end
 
-	local function update(at: number)
+	-- Short steering probes fit these flat clearings. Every candidate needs floor
+	-- and a clear body-width corridor; walls and cliff edges stop movement.
+	local function move(foe: Foe, goal: Vector3, speed: number, delta: number, players: { Player })
+		local offset = Vector3.new(goal.X - foe.root.Position.X, 0, goal.Z - foe.root.Position.Z)
+		if offset.Magnitude < 0.1 then return end
+		local step = math.min(speed * delta, offset.Magnitude)
+		local parameters = RaycastParams.new()
+		parameters.FilterType = Enum.RaycastFilterType.Exclude
+		local excluded: { Instance } = { folder }
+		for _, player in players do if player.Character then table.insert(excluded, player.Character) end end
+		parameters.FilterDescendantsInstances = excluded
+		parameters.RespectCanCollide = true
+		local width = if foe.definition.boss then 2.5 else 1.8
+		for _, angle in { 0, 45, -45, 90, -90, 135, -135, 180 } do
+			local direction = CFrame.Angles(0, math.rad(angle), 0):VectorToWorldSpace(offset.Unit)
+			local position = foe.root.Position + direction * step
+			local radius = if foe.state == "Patrol" then Rules.patrolRadius else Rules.leashRadius
+			if not Rules.inRange(point(position), point(foe.home), radius) then continue end
+			local side = Vector3.new(-direction.Z, 0, direction.X) * width
+			local clear = true
+			for _, sideOffset in { Vector3.zero, side, -side } do
+				local from = foe.root.Position + sideOffset
+				if Workspace:Raycast(from, direction * (step + width), parameters) then clear = false; break end
+				local floor = Workspace:Raycast(position + sideOffset + Vector3.new(0, 2, 0), Vector3.new(0, -9, 0), parameters)
+				if not floor or math.abs(floor.Position.Y - Rules.groundHeight) > 1.25 then clear = false; break end
+			end
+			if clear then place(foe, position, direction); return end
+		end
+	end
+
+	local function beginMelee(foe: Foe, target: Actor, at: number)
+		place(foe, foe.root.Position, target.root.Position - foe.root.Position)
+		foe.melee = { target = target, resolveAt = at + Rules.enemyMeleeWindup }
+		foe.nextMelee = at + (if foe.definition.boss then Rules.bossMeleeCooldown else Rules.enemyMeleeCooldown)
+		foe.model:SetAttribute("AttackTarget", target.root.Position)
+		setState(foe, "MeleeWindup", at, Rules.enemyMeleeWindup)
+		foe.model:SetAttribute("Status", "Windup")
+	end
+
+	local function update(at: number, delta: number)
 		if destroyed then
 			return
 		end
@@ -954,36 +1115,71 @@ function CombatService.start(
 				end
 				continue
 			end
+			if foe.state == "Return" then
+				if (foe.root.Position - foe.home).Magnitude <= 0.8 then reset(foe, at)
+				else move(foe, foe.home, Rules.chaseSpeed, delta, players) end
+				continue
+			end
 			local nearest = nearestPlayer(foe)
 			if nearest then
 				engage(foe, at)
 				foe.lastNearby = at
 			elseif foe.engaged and at >= foe.lastNearby + Rules.encounterResetDelay then
-				reset(foe, at)
+				clearSlam(foe)
+				foe.melee = nil
+				setState(foe, "Return", at)
+				foe.model:SetAttribute("Status", "Returning")
+				continue
 			end
 			local slam = foe.slam
 			if slam and at >= slam.resolveAt then
 				for _, player in players do
 					local source = actor(player)
 					if source and Rules.eligible(getState(player), true, foe.definition.id)
-						and Rules.inSlam(point(source.root.Position), point(slam.center), slam.radius) then
-						source.humanoid:TakeDamage(foe.definition.slamDamage)
+						and Rules.inSlam(point(source.root.Position), point(slam.center), slam.radius) and lineOfSight(source, foe) then
+						takeDamage(source, foe.definition.slamDamage, at)
 					end
 				end
 				clearSlam(foe)
 				foe.nextSlam = at + Rules.slamCooldown
+				foe.recoverUntil = at + Rules.enemyMeleeRecover
+				setState(foe, "MeleeRecover", at, Rules.enemyMeleeRecover)
 				foe.model:SetAttribute("Status", "Ready")
-			elseif not slam and at >= foe.nextSlam then
+			end
+			local melee = foe.melee
+			if melee and at >= melee.resolveAt then
+				local target = actor(melee.target.player)
+				if target and target.character == melee.target.character and Rules.eligible(getState(target.player), true, foe.definition.id)
+					and Rules.inEnemyMelee(point(target.root.Position), point(foe.root.Position), point(foe.facing))
+					and lineOfSight(target, foe) then takeDamage(target, foe.definition.meleeDamage, at) end
+				foe.melee = nil
+				foe.recoverUntil = at + Rules.enemyMeleeRecover
+				setState(foe, "MeleeRecover", at, Rules.enemyMeleeRecover)
+				foe.model:SetAttribute("Status", "Ready")
+			end
+			if not foe.slam and not foe.melee and at >= foe.recoverUntil then
 				if nearest then
-					beginSlam(foe, nearest, at)
+					if at >= foe.nextSlam then beginSlam(foe, nearest, at)
+					elseif Rules.inRange(point(nearest.root.Position), point(foe.root.Position), Rules.enemyMeleeRange) then
+						if at >= foe.nextMelee then beginMelee(foe, nearest, at) end
+					else
+						setState(foe, "Chase", at)
+						move(foe, nearest.root.Position, Rules.chaseSpeed, delta, players)
+					end
+				else
+					setState(foe, "Patrol", at)
+					local phase = foe.patrol * 2.4 + foe.home.X
+					local goal = foe.home + Vector3.new(math.sin(phase), 0, math.cos(phase)) * Rules.patrolRadius * 0.75
+					if (foe.root.Position - goal).Magnitude < 0.6 then foe.patrol += 1 end
+					move(foe, goal, Rules.patrolSpeed, delta, players)
 				end
 			end
 			local flashing = at < foe.flashUntil
-			foe.highlight.Enabled = flashing or foe.slam ~= nil
+			foe.highlight.Enabled = flashing or foe.slam ~= nil or foe.melee ~= nil
 			if flashing then
 				foe.highlight.FillColor = Color3.fromRGB(255, 246, 221)
 				foe.highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
-			elseif foe.slam then
+			elseif foe.slam or foe.melee then
 				foe.highlight.FillColor = Color3.fromRGB(255, 99, 55)
 				foe.highlight.OutlineColor = Color3.fromRGB(255, 170, 75)
 			end
@@ -994,8 +1190,9 @@ function CombatService.start(
 	local heartbeat = RunService.Heartbeat:Connect(function(delta: number)
 		accumulated += delta
 		if accumulated >= 0.1 then
+			local elapsed = math.min(accumulated, 0.2)
 			accumulated = 0
-			update(os.clock())
+			update(Workspace:GetServerTimeNow(), elapsed)
 		end
 	end)
 	local leaving = Players.PlayerRemoving:Connect(function(player: Player)
@@ -1007,37 +1204,36 @@ function CombatService.start(
 	end)
 
 	local service = {}
-	function service.attack(player: Player): (boolean, string)
+	function service.attack(player: Player): (boolean, string, Vector3?)
 		if destroyed then
-			return false, "Combat is unavailable."
+			return false, "Combat is unavailable.", nil
 		end
 		local source = actor(player)
 		if not source then
-			return false, "Wait until your character is ready."
+			return false, "Wait until your character is ready.", nil
 		end
 		local state = getState(player)
-		if not state or not state.active then
-			return false, "Start an expedition at camp first."
-		end
-		local at = os.clock()
+		local at = Workspace:GetServerTimeNow()
 		if not Rules.cooldownReady(at, lastAttack[player], Rules.meleeCooldown) then
-			return false, "Your next swing is not ready yet."
+			return false, "Your next swing is not ready yet.", nil
 		end
 		lastAttack[player] = at
+		local ahead = source.root.Position + source.root.CFrame.LookVector * 6
+		if not state or not state.active then return true, "Practice swing.", ahead end
 		local selected = selectFoe(source, state, Rules.meleeRange)
 		if not selected then
-			return false, "Move closer to an unfinished guardian."
+			return true, "Swing.", ahead
 		end
 		damage(selected, player, source, Rules.meleeDamage, at)
 		if selected.health <= 0 then
-			return true, selected.definition.name .. " defeated!"
+			return true, selected.definition.name .. " defeated!", selected.root.Position
 		end
-		return true, selected.definition.name .. ": " .. tostring(selected.health) .. " HP"
+		return true, selected.definition.name .. ": " .. tostring(selected.health) .. " HP", selected.root.Position
 	end
 
 	function service.cooldown(player: Player): number
 		local previous = lastBond[player]
-		return if previous then math.max(0, previous + Rules.petCooldown - os.clock()) else 0
+		return if previous then math.max(0, previous + Rules.petCooldown - Workspace:GetServerTimeNow()) else 0
 	end
 
 	function service.bond(player: Player): (boolean, string)
@@ -1046,7 +1242,7 @@ function CombatService.start(
 		if not source then return false, "Wait until your character is ready." end
 		if not state or not state.active then return false, "Start an expedition at camp first." end
 		if not Rules.canBond(state) then return false, "Equip a companion you own first." end
-		local at = os.clock()
+		local at = Workspace:GetServerTimeNow()
 		if not Rules.cooldownReady(at, lastBond[player], Rules.petCooldown) then
 			return false, "Your companion is catching its breath."
 		end
@@ -1057,14 +1253,14 @@ function CombatService.start(
 		local life, character, equipped, defeated = selected.life, source.character, state.equipped, state.defeated
 		local equipRevision = state.equipRevision
 		task.delay(Rules.petWindup, function()
-			if destroyed or not selected.alive or selected.life ~= life then return end
+			if destroyed or not selected.alive or selected.life ~= life or selected.state == "Return" then return end
 			local current, currentState = actor(player), getState(player)
 			if not current or current.character ~= character or currentState ~= state
 				or currentState.defeated ~= defeated or currentState.equipped ~= equipped or currentState.equipRevision ~= equipRevision
 				or not Rules.canBond(currentState) or not Rules.eligible(currentState, true, selected.definition.id)
 				or not Rules.inRange(point(current.root.Position), point(selected.root.Position), Rules.petRange)
 				or not lineOfSight(current, selected) then return end
-			damage(selected, player, current, Rules.petDamage, os.clock())
+			damage(selected, player, current, Rules.petDamage, Workspace:GetServerTimeNow())
 		end)
 		if onBondFx then onBondFx(player, selected.root.Position) end
 		return true, "Companion strike!"
@@ -1094,11 +1290,131 @@ return CombatService
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="8">
+      <Item class="ModuleScript" referent="9">
+        <Properties>
+          <string name="Name">DodgeService</string>
+          <string name="Source"><![CDATA[--!nonstrict
+-- Server-owned horizontal movement, collision checks and a short evade window.
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Rules = require(ReplicatedStorage:WaitForChild("Wildbond"):WaitForChild("DodgeRules"))
+
+local DodgeService = {}
+
+function DodgeService.start()
+	local active, lastDodge = {}, {}
+	local destroyed = false
+	local function finish(player)
+		local dash = active[player]
+		if not dash then return end
+		active[player] = nil
+		dash.character:SetAttribute("DodgeUntil", 0)
+		if dash.humanoid.Parent then
+			dash.humanoid.WalkSpeed = dash.walkSpeed
+			dash.humanoid.AutoRotate = dash.autoRotate
+		end
+		if dash.root.Parent then
+			pcall(function()
+				if dash.wasAutomatic then dash.root:SetNetworkOwnershipAuto()
+				else dash.root:SetNetworkOwner(dash.owner) end
+			end)
+		end
+	end
+	local heartbeat = RunService.Heartbeat:Connect(function(dt)
+		local now = Workspace:GetServerTimeNow()
+		for player, dash in active do
+			if player.Parent ~= Players or player.Character ~= dash.character or not dash.root.Parent or dash.humanoid.Health <= 0 then
+				finish(player)
+				continue
+			end
+			local delta = math.min(dt, math.max(0, dash.endsAt - dash.lastStep))
+			if now >= dash.endsAt then
+				-- Do not stretch a dash over a stalled server frame.
+				delta = math.min(delta, math.max(0, dash.endsAt - dash.lastStep))
+			end
+			local step = math.min(Rules.distance - dash.travelled, Rules.distance / Rules.duration * delta)
+			local position = dash.root.Position
+			local blocked = false
+			for _, height in { -1.5, 0, 1.5 } do
+				if Workspace:Raycast(position + Vector3.new(0, height, 0), dash.direction * (step + Rules.collisionMargin), dash.parameters) then
+					blocked = true
+					break
+				end
+			end
+			local nextPosition = position + dash.direction * step
+			local floor = Workspace:Raycast(nextPosition + Vector3.new(0, 4, 0), Vector3.new(0, -24, 0), dash.parameters)
+			if blocked or not floor or floor.Normal.Y < 0.55 or floor.Position.Y < position.Y - 12 then
+				finish(player)
+				continue
+			end
+			dash.root.CFrame += dash.direction * step
+			dash.travelled += step
+			dash.lastStep = math.min(now, dash.endsAt)
+			if now >= dash.endsAt or dash.travelled >= Rules.distance then finish(player) end
+		end
+	end)
+	local leaving = Players.PlayerRemoving:Connect(function(player)
+		finish(player)
+		lastDodge[player] = nil
+	end)
+	local service = {}
+	function service.dodge(player, requestedDirection)
+		if destroyed then return false, "Dodge is unavailable." end
+		if player.Parent ~= Players or typeof(requestedDirection) ~= "Vector3" then return false, "Invalid dodge." end
+		local direction = Rules.direction({ x = requestedDirection.X, y = requestedDirection.Y, z = requestedDirection.Z })
+		if not direction then return false, "Invalid dodge direction." end
+		local character = player.Character
+		local root = character and character:FindFirstChild("HumanoidRootPart")
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+		if not character or not root or not humanoid or humanoid.Health <= 0 or root.Anchored then
+			return false, "Wait until your character is ready."
+		end
+		local now = Workspace:GetServerTimeNow()
+		if active[player] or not Rules.ready(now, lastDodge[player]) then return false, "Your dodge is recovering." end
+		local wasAutomatic, owner
+		local acquired = pcall(function()
+			wasAutomatic = root:GetNetworkOwnershipAuto()
+			owner = root:GetNetworkOwner()
+			root:SetNetworkOwner(nil)
+		end)
+		if not acquired then return false, "Your character cannot dodge yet." end
+		local parameters = RaycastParams.new()
+		parameters.FilterType = Enum.RaycastFilterType.Exclude
+		parameters.FilterDescendantsInstances = { character }
+		parameters.RespectCanCollide = true
+		local vector = Vector3.new(direction.x, 0, direction.z)
+		active[player] = {
+			character = character, root = root, humanoid = humanoid, direction = vector,
+			parameters = parameters, endsAt = now + Rules.duration, lastStep = now, travelled = 0,
+			walkSpeed = humanoid.WalkSpeed, autoRotate = humanoid.AutoRotate, wasAutomatic = wasAutomatic, owner = owner,
+		}
+		lastDodge[player] = now
+		humanoid.WalkSpeed, humanoid.AutoRotate = 0, false
+		character:SetAttribute("DodgeUntil", now + Rules.invulnerabilityDuration)
+		return true, "Dodge!", vector
+	end
+	function service.destroy()
+		if destroyed then return end
+		destroyed = true
+		heartbeat:Disconnect()
+		leaving:Disconnect()
+		for player in active do finish(player) end
+		table.clear(lastDodge)
+	end
+	return service
+end
+
+return DodgeService
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="ModuleScript" referent="10">
         <Properties>
           <string name="Name">WorldBuilder</string>
           <string name="Source"><![CDATA[--!strict
--- The first playable island uses only original, locally generated geometry.
+-- Greywater Reach is a connected woodland valley, built from original local geometry.
 local Lighting = game:GetService("Lighting")
 
 local WorldBuilder = {}
@@ -1199,15 +1515,11 @@ function WorldBuilder.build(): World
 		part("Trail", Vector3.new(width, 0.12, delta.Magnitude + 1), CFrame.lookAt(middle, b), palette.path, Enum.Material.Sand)
 	end
 
-	-- All expedition routes share a flat surface; cliffs are scenery.
-	local sea = part("Sea", Vector3.new(1600, 2, 1600), CFrame.new(0, -7, 0), Color3.fromRGB(75, 145, 173))
-	sea.Material = Enum.Material.SmoothPlastic
-	sea.CanCollide = false
-	part("IslandEarth", Vector3.new(166, 12, 204), CFrame.new(8, -4, -29), palette.earth, Enum.Material.Rock)
-	part("IslandMeadow", Vector3.new(166, 4, 204), CFrame.new(8, 2, -29), palette.grass, Enum.Material.Grass)
-	part("WestCoast", Vector3.new(27, 4, 113), CFrame.new(-79, 2, -33) * CFrame.Angles(0, math.rad(8), 0), palette.grass, Enum.Material.Grass)
-	part("SouthBeach", Vector3.new(128, 4, 19), CFrame.new(9, 1.5, 79), palette.path, Enum.Material.Sand)
-	part("EasternShore", Vector3.new(18, 4, 159), CFrame.new(96, 1.6, -24) * CFrame.Angles(0, math.rad(-5), 0), palette.path, Enum.Material.Sand)
+	-- Keep the encounter floor level while the surrounding land reads as a valley.
+	-- The broad landscape continues beyond the ridges; there is no ocean/island edge.
+	part("WoodlandLandscape", Vector3.new(1800, 12, 1800), CFrame.new(8, -6, -29), palette.grass, Enum.Material.Grass)
+	part("IslandEarth", Vector3.new(220, 12, 260), CFrame.new(8, -4, -29), palette.earth, Enum.Material.Rock)
+	part("IslandMeadow", Vector3.new(220, 4, 260), CFrame.new(8, 2, -29), palette.grass, Enum.Material.Grass)
 
 	local trailPoints = {
 		Vector3.new(0, 4.07, 35),
@@ -1255,6 +1567,11 @@ function WorldBuilder.build(): World
 	end
 	local tavernSign = part("TavernSign", Vector3.new(5.5, 1.7, 0.4), CFrame.new(tavernX, 10.8, tavernZ - 9.8), palette.wood)
 	label(tavernSign, "THE WAYFARER", palette.cream)
+	local regionSign = part("RegionSign", Vector3.new(7.8, 2.2, 0.4), CFrame.new(4, 7.8, 49), palette.woodLight, Enum.Material.Wood)
+	for _, x in { 0.5, 7.5 } do
+		part("RegionSignPost", Vector3.new(0.5, 4.3, 0.5), CFrame.new(x, 6.15, 49), palette.wood)
+	end
+	label(regionSign, "GREYWATER REACH")
 
 	local spawn = Instance.new("SpawnLocation")
 	spawn.Name = "VillageSpawn"
@@ -1310,6 +1627,54 @@ function WorldBuilder.build(): World
 		light.Parent = lantern
 	end
 
+	-- This is a visible travel landmark, not an unimplemented teleport or dialogue.
+	-- Its approach stays south of the tavern and outside every combat corridor.
+	part("CarriageYard", Vector3.new(25, 0.14, 25), CFrame.new(-58, 4.07, 65), palette.path, Enum.Material.Ground)
+	local approach = { Vector3.new(0, 4.07, 35), Vector3.new(-7, 4.07, 55), Vector3.new(-45, 4.07, 55) }
+	for index = 1, #approach - 1 do
+		local a, b = approach[index], approach[index + 1]
+		part("CarriageApproach", Vector3.new(5, 0.12, (b - a).Magnitude + 1), CFrame.lookAt((a + b) / 2, b), palette.path, Enum.Material.Ground)
+	end
+	local carriageX, carriageZ = -59, 66
+	part("CarriageBed", Vector3.new(6.5, 0.55, 10), CFrame.new(carriageX, 6.15, carriageZ), palette.woodLight, Enum.Material.WoodPlanks)
+	for _, side in { -1, 1 } do
+		part("CarriageSide", Vector3.new(0.5, 2.1, 9.5), CFrame.new(carriageX + side * 3.1, 7.35, carriageZ), palette.wood)
+		part("CarriageCanopyPost", Vector3.new(0.4, 4.9, 0.4), CFrame.new(carriageX + side * 3, 8.3, carriageZ + 3.8), palette.wood)
+		part("CarriageCanopyPost", Vector3.new(0.4, 4.9, 0.4), CFrame.new(carriageX + side * 3, 8.3, carriageZ - 3.8), palette.wood)
+		part("CarriageShaft", Vector3.new(0.35, 0.35, 8), CFrame.new(carriageX + side * 2.1, 5.6, carriageZ - 8.5), palette.wood)
+		for _, endZ in { -3.2, 3.2 } do
+			local wheelFrame = CFrame.new(carriageX + side * 3.8, 5.6, carriageZ + endZ)
+			local wheel = part("CarriageWheel", Vector3.new(0.65, 3.1, 3.1), wheelFrame, palette.wood, Enum.Material.Wood)
+			wheel.Shape = Enum.PartType.Cylinder
+			local hub = part("CarriageHub", Vector3.new(0.8, 0.8, 0.8), wheelFrame, palette.cream, Enum.Material.Metal)
+			hub.Shape = Enum.PartType.Cylinder
+		end
+	end
+	part("CarriageSeat", Vector3.new(5, 0.5, 1.8), CFrame.new(carriageX, 7, carriageZ - 3.2), palette.woodLight)
+	part("CarriageCanopy", Vector3.new(7.2, 0.5, 10.2), CFrame.new(carriageX, 10.8, carriageZ), palette.roof, Enum.Material.Fabric)
+	-- A resting draft horse gives the stop a purpose before region travel is built.
+	part("DraftHorseBody", Vector3.new(2.3, 2.5, 4.2), CFrame.new(-59, 7.05, 51), Color3.fromRGB(137, 111, 86))
+	part("DraftHorseNeck", Vector3.new(1.4, 2.4, 1.5), CFrame.new(-59, 8.2, 48.8) * CFrame.Angles(math.rad(-15), 0, 0), Color3.fromRGB(137, 111, 86))
+	part("DraftHorseHead", Vector3.new(1.6, 1.5, 2.2), CFrame.new(-59, 9.1, 47.8), Color3.fromRGB(157, 129, 101))
+	part("DraftHorseMane", Vector3.new(0.5, 2.2, 0.5), CFrame.new(-59, 8.45, 49.5), Color3.fromRGB(75, 61, 52))
+	part("DraftHorseTail", Vector3.new(0.6, 2.4, 0.6), CFrame.new(-59, 6.8, 53.3) * CFrame.Angles(math.rad(15), 0, 0), Color3.fromRGB(75, 61, 52))
+	for _, side in { -1, 1 } do
+		part("DraftHorseEar", Vector3.new(0.35, 0.9, 0.5), CFrame.new(-59 + side * 0.48, 10.2, 48.2), Color3.fromRGB(137, 111, 86))
+		for _, endZ in { -1.2, 1.2 } do
+			part("DraftHorseLeg", Vector3.new(0.65, 2.2, 0.7), CFrame.new(-59 + side * 0.8, 5.4, 51 + endZ), Color3.fromRGB(137, 111, 86))
+			part("DraftHorseHoof", Vector3.new(0.7, 0.4, 0.8), CFrame.new(-59 + side * 0.8, 4.3, 51 + endZ), Color3.fromRGB(75, 61, 52))
+		end
+		part("WaygatePost", Vector3.new(1, 8, 1), CFrame.new(-59 + side * 5, 8, 81), palette.wood, Enum.Material.Wood)
+	end
+	part("WaygateLintel", Vector3.new(12, 1, 1.2), CFrame.new(-59, 12, 81), palette.woodLight, Enum.Material.Wood)
+	local travelSign = part("CarriageStopSign", Vector3.new(8, 2, 0.5), CFrame.new(-45, 7.5, 73), palette.woodLight, Enum.Material.Wood)
+	part("CarriageStopPost", Vector3.new(0.6, 5.8, 0.6), CFrame.new(-45, 6.9, 73), palette.wood)
+	label(travelSign, "Other regions — future update")
+	local travelGui = travelSign:FindFirstChild("LandmarkLabel") :: BillboardGui
+	travelGui.Size = UDim2.fromOffset(330, 48)
+	local travelText = travelGui:FindFirstChildOfClass("TextLabel") :: TextLabel
+	travelText.TextSize = 16
+
 	-- Broad clearings accommodate the three server-controlled encounters.
 	local stops = {
 		{ id = "moss", name = "MossdenBounty", title = "MOSSDEN", position = Vector3.new(-45, 5.7, -25), color = Color3.fromRGB(155, 205, 124) },
@@ -1325,17 +1690,31 @@ function WorldBuilder.build(): World
 		interaction(stop.id, landmark, "Collect bounty", stop.title)
 	end
 
-	-- Terraced silhouettes stay behind the playable ground.
-	for index, cliffZ in { 40, 4, -35, -78, -113 } do
-		local height = 14 + index * 2
-		part("WesternCliff", Vector3.new(23, height, 31), CFrame.new(-88, 4 + height / 2, cliffZ), palette.earth, Enum.Material.Rock)
-		part("CliffMeadow", Vector3.new(24, 1.4, 32), CFrame.new(-88, 4 + height + 0.4, cliffZ), palette.grassLight, Enum.Material.Grass)
+	-- Overlapping ridges enclose the playable region and continue into the horizon.
+	-- The low valley remains readable from camp rather than exposing an island rim.
+	for _, side in { -1, 1 } do
+		for index = 1, 9 do
+			local cliffZ = 85 - (index - 1) * 29
+			local height = 22 + index % 3 * 6
+			local cliffX = if side < 0 then -103 else 119
+			part("ValleySideRidge", Vector3.new(22, height, 32), CFrame.new(cliffX, 4 + height / 2, cliffZ), palette.stone, Enum.Material.Rock)
+			part("ValleySideGrass", Vector3.new(23, 1.2, 33), CFrame.new(cliffX, 4 + height + 0.3, cliffZ), palette.grassLight, Enum.Material.Grass)
+		end
 	end
-	for index = 1, 5 do
-		local cliffX = -54 + (index - 1) * 33
-		local height = if index == 3 then 24 else 15 + index % 3 * 3
-		part("NorthernCliff", Vector3.new(31, height, 17), CFrame.new(cliffX, 4 + height / 2, -125), palette.earth, Enum.Material.Rock)
-		part("NorthernGrass", Vector3.new(32, 1, 18), CFrame.new(cliffX, 4 + height + 0.3, -125), palette.grassLight, Enum.Material.Grass)
+	for index = 1, 8 do
+		local cliffX = -98 + (index - 1) * 30
+		local height = 24 + index % 3 * 5
+		part("NorthernCliff", Vector3.new(33, height, 24), CFrame.new(cliffX, 4 + height / 2, -155), palette.stone, Enum.Material.Rock)
+		part("NorthernGrass", Vector3.new(34, 1.2, 25), CFrame.new(cliffX, 4 + height + 0.3, -155), palette.grassLight, Enum.Material.Grass)
+		part("SouthernRidge", Vector3.new(33, 18 + index % 2 * 5, 24), CFrame.new(cliffX, 13 + index % 2 * 2.5, 101), palette.stone, Enum.Material.Rock)
+		part("SouthernRidgeGrass", Vector3.new(34, 1.2, 25), CFrame.new(cliffX, 22.4 + index % 2 * 5, 101), palette.grassLight, Enum.Material.Grass)
+	end
+	for layer = 1, 2 do
+		for index = 1, 7 do
+			local height = 44 + layer * 20 + index % 3 * 14
+			local ridge = part("DistantWoodlandRidge", Vector3.new(90, height, 84), CFrame.new(-224 + index * 59, height / 2 - 2, -165 - layer * 56) * CFrame.Angles(0, math.rad(index % 2 * 20 - 10), 0), if layer == 1 then Color3.fromRGB(112, 141, 126) else Color3.fromRGB(137, 163, 152), Enum.Material.Grass)
+			ridge.CanCollide = false
+		end
 	end
 	part("WaterfallShelf", Vector3.new(23, 20, 10), CFrame.new(-9, 14, -109), palette.stone, Enum.Material.Rock)
 	part("WaterfallShelfGrass", Vector3.new(24, 1, 11), CFrame.new(-9, 24.3, -109), palette.grassLight)
@@ -1395,6 +1774,13 @@ function WorldBuilder.build(): World
 		if (point - Vector3.new(-24, 4.07, 38)).Magnitude < 22 or (point - Vector3.new(20, 4.07, 27)).Magnitude < 20 then
 			return false
 		end
+		if x > -74 and x < -37 and z > 40 then
+			return false
+		end
+		if distanceToSegment(point, Vector3.new(0, 4.07, 35), Vector3.new(-7, 4.07, 55)) < 7
+			or distanceToSegment(point, Vector3.new(-7, 4.07, 55), Vector3.new(-45, 4.07, 55)) < 7 then
+			return false
+		end
 		for _, stop in stops do
 			local encounter = Vector3.new(stop.position.X, 4.07, stop.position.Z + 8)
 			if (point - encounter).Magnitude < (if stop.id == "ruins" then 28 else 23) then
@@ -1414,11 +1800,11 @@ function WorldBuilder.build(): World
 
 	local random = Random.new(52719)
 	local trees = 0
-	for _ = 1, 150 do
-		if trees >= 30 then
+	for _ = 1, 240 do
+		if trees >= 40 then
 			break
 		end
-		local x, z = random:NextNumber(-68, 82), random:NextNumber(-113, 62)
+		local x, z = random:NextNumber(-82, 95), random:NextNumber(-133, 76)
 		if clearForScenery(x, z) then
 			tree(x, z, random:NextNumber(0.7, 1.1), z < -45)
 			trees += 1
@@ -1483,6 +1869,8 @@ function WorldBuilder.build(): World
 	bloom.Parent = Lighting
 	world:SetAttribute("GeneratedPartCount", partCount)
 	world:SetAttribute("PrototypeGeometry", true)
+	world:SetAttribute("RegionName", "Greywater Reach")
+	world:SetAttribute("TravelImplemented", false)
 
 	return {
 		prompts = prompts,
@@ -1496,23 +1884,23 @@ return WorldBuilder
       </Item>
     </Item>
   </Item>
-  <Item class="SoundService" referent="9">
+  <Item class="SoundService" referent="11">
     <Properties>
       <string name="Name">SoundService</string>
       <bool name="RespectFilteringEnabled">true</bool>
     </Properties>
   </Item>
-  <Item class="StarterPlayer" referent="10">
+  <Item class="StarterPlayer" referent="12">
     <Properties>
       <string name="Name">StarterPlayer</string>
       <float name="CharacterJumpHeight">7.2</float>
       <float name="CharacterWalkSpeed">20</float>
     </Properties>
-    <Item class="StarterCharacterScripts" referent="11">
+    <Item class="StarterCharacterScripts" referent="13">
       <Properties>
         <string name="Name">StarterCharacterScripts</string>
       </Properties>
-      <Item class="Script" referent="12">
+      <Item class="Script" referent="14">
         <Properties>
           <string name="Name">Health</string>
           <token name="RunContext">0</token>
@@ -1522,11 +1910,11 @@ return WorldBuilder
         </Properties>
       </Item>
     </Item>
-    <Item class="StarterPlayerScripts" referent="13">
+    <Item class="StarterPlayerScripts" referent="15">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="LocalScript" referent="14">
+      <Item class="LocalScript" referent="16">
         <Properties>
           <string name="Name">WildbondClient</string>
           <string name="Source"><![CDATA[--!nonstrict
@@ -1535,15 +1923,20 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local shared = ReplicatedStorage:WaitForChild("Wildbond")
 local Expedition = require(shared:WaitForChild("Expedition"))
 local CombatRules = require(shared:WaitForChild("CombatRules"))
+local DodgeRules = require(shared:WaitForChild("DodgeRules"))
 local Hud = require(script:WaitForChild("Hud"))
 local CompanionView = require(script:WaitForChild("CompanionView"))
+local EnemyView = require(script:WaitForChild("EnemyView"))
+local PlayerCombatView = require(script:WaitForChild("PlayerCombatView"))
 local remotes = shared:WaitForChild("Remotes")
 local command = remotes:WaitForChild("Command")
 local update = remotes:WaitForChild("Update")
 local effect = remotes:WaitForChild("Effect")
 
-local hud = Hud.start(command, Expedition.pets, CombatRules)
+local hud = Hud.start(command, Expedition.pets, CombatRules, DodgeRules)
 local stopCompanion, animateBond = CompanionView.start(Players.LocalPlayer)
+local stopEnemies = EnemyView.start()
+local stopPlayer, animateMelee, animateDodge = PlayerCombatView.start(Players.LocalPlayer)
 local connection = update.OnClientEvent:Connect(function(state, message, success)
 	hud:render(state, message, success)
 end)
@@ -1551,6 +1944,12 @@ local effectConnection = effect.OnClientEvent:Connect(function(kind, position)
 	if kind == "bond" and typeof(position) == "Vector3" then
 		animateBond(position)
 		hud:bondAccepted(CombatRules.petCooldown)
+	elseif kind == "melee" and typeof(position) == "Vector3" then
+		animateMelee(position)
+		hud:meleeAccepted(CombatRules.meleeCooldown)
+	elseif kind == "dodge" and typeof(position) == "Vector3" then
+		animateDodge(position)
+		hud:dodgeAccepted(DodgeRules.cooldown)
 	end
 end)
 command:FireServer("sync")
@@ -1559,11 +1958,13 @@ script.Destroying:Connect(function()
 	connection:Disconnect()
 	effectConnection:Disconnect()
 	stopCompanion()
+	stopEnemies()
+	stopPlayer()
 	hud:destroy()
 end)
 ]]></string>
         </Properties>
-        <Item class="ModuleScript" referent="15">
+        <Item class="ModuleScript" referent="17">
           <Properties>
             <string name="Name">CompanionView</string>
             <string name="Source"><![CDATA[--!strict
@@ -1774,7 +2175,219 @@ return CompanionView
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="16">
+        <Item class="ModuleScript" referent="18">
+          <Properties>
+            <string name="Name">EnemyView</string>
+            <string name="Source"><![CDATA[--!strict
+-- Local articulation only; the original server geometry remains the hitbox.
+local RunService = game:GetService("RunService")
+local EnemyView = {}
+
+type Piece = { source: BasePart, part: BasePart, offset: CFrame, size: Vector3, transparency: number, hidden: number }
+type Enemy = {
+	model: Model, visual: Model, pieces: { [BasePart]: Piece }, connections: { RBXScriptConnection },
+	root: BasePart?, frame: CFrame?, dirty: boolean, phase: number, state: string, changedAt: number,
+}
+type FolderWatch = { active: boolean, connections: { RBXScriptConnection } }
+
+local function disconnect(connections: { RBXScriptConnection })
+	for _, connection in connections do connection:Disconnect() end
+	table.clear(connections)
+end
+
+local function removePiece(enemy: Enemy, source: BasePart)
+	local piece = enemy.pieces[source]
+	if not piece then return end
+	source.LocalTransparencyModifier = piece.hidden
+	piece.part:Destroy()
+	enemy.pieces[source] = nil
+end
+
+local function addPiece(enemy: Enemy, source: BasePart, root: BasePart)
+	if enemy.pieces[source] then return end
+	local clone = source:Clone()
+	if not clone then return end
+	-- Keep authored mesh/texture geometry, but never copy scripts, GUIs or joints.
+	for _, child in clone:GetChildren() do
+		if not (child:IsA("DataModelMesh") or child:IsA("SurfaceAppearance") or child:IsA("Decal")) then child:Destroy() end
+	end
+	clone.Anchored, clone.CanCollide, clone.CanQuery, clone.CanTouch = true, false, false, false
+	clone.LocalTransparencyModifier = 0
+	clone.Parent = enemy.visual
+	enemy.pieces[source] = {
+		source = source, part = clone, offset = root.CFrame:ToObjectSpace(source.CFrame), size = source.Size,
+		transparency = source.Transparency, hidden = source.LocalTransparencyModifier,
+	}
+	source.LocalTransparencyModifier = 1
+end
+
+local function stateOf(model: Model): string
+	local state = model:GetAttribute("State")
+	if typeof(state) == "string" then return state end
+	local status = model:GetAttribute("Status")
+	if model:GetAttribute("Health") == 0 or status == "Defeated" or status == "Dead" then return "Dead" end
+	if status == "Returning" then return "Return" end
+	if status == "Windup" then return "SkillWindup" end
+	return "Patrol"
+end
+
+local function animate(enemy: Enemy, dt: number, now: number, container: Folder)
+	local root = enemy.model.PrimaryPart
+	if not root or not root:IsDescendantOf(enemy.model) then
+		enemy.visual.Parent = nil
+		return
+	end
+	if enemy.root ~= root then
+		for source in enemy.pieces do removePiece(enemy, source) end
+		enemy.root, enemy.frame, enemy.dirty = root, nil, true
+	end
+	if enemy.dirty then
+		enemy.dirty = false
+		for _, item in enemy.model:GetDescendants() do
+			if item:IsA("BasePart") then addPiece(enemy, item, root) end
+		end
+	end
+	enemy.visual.Parent = container
+	local previous = enemy.frame or root.CFrame
+	local frame = if (previous.Position - root.Position).Magnitude > 40 then root.CFrame
+		else previous:Lerp(root.CFrame, 1 - math.exp(-math.min(dt, 0.1) * 14))
+	local speed = (frame.Position - previous.Position).Magnitude / math.max(dt, 0.001)
+	enemy.frame = frame
+	local state = stateOf(enemy.model)
+	if state ~= enemy.state then enemy.state, enemy.changedAt = state, now end
+	local started = enemy.model:GetAttribute("ActionStartedAt")
+	local duration = enemy.model:GetAttribute("ActionDuration")
+	local fallback = if state == "Dead" then 0.7 elseif state == "MeleeRecover" then 0.28 else 0.6
+	local progress = math.clamp((now - (if typeof(started) == "number" then started else enemy.changedAt))
+		/ (if typeof(duration) == "number" and duration > 0 then duration else fallback), 0, 1)
+	local moving = state == "Patrol" or state == "Chase" or state == "Return"
+	local gait = if moving then math.clamp(speed / 8, 0, 1) else 0
+	enemy.phase += math.min(dt, 0.1) * (4 + math.min(speed, 16) * 0.9)
+	local scale = root.Size.X / 3.1
+	local anticipation = progress * progress
+	local rightArm, leftArm, lean, twist = 0, 0, 0, 0
+	if state == "MeleeWindup" then
+		rightArm, leftArm, lean, twist = anticipation * 1.2, -anticipation * 0.2, anticipation * 0.12, -anticipation * 0.3
+	elseif state == "MeleeRecover" then
+		rightArm, leftArm, lean, twist = -1.15 * (1 - progress), 0.2 * (1 - progress), -0.18 * (1 - progress), 0.3 * (1 - progress)
+	elseif state == "SkillWindup" then
+		rightArm, leftArm, lean = anticipation * 2.55, anticipation * 2.55, anticipation * 0.14
+	end
+	local dead = if state == "Dead" then progress else 0
+	local shrink = math.max(0.04, 1 - dead * 0.96)
+	local bob = (math.sin(enemy.phase * 2) * 0.07 * gait + math.sin(now * 2.2) * 0.025) * scale
+	local body = frame * CFrame.new(0, bob - dead * 1.1 * scale, 0)
+		* CFrame.Angles(lean, twist, dead * 0.65)
+	for _, piece in enemy.pieces do
+		local name, offset = piece.source.Name, piece.offset
+		local side = if offset.X < 0 then -1 else 1
+		if name == "RootLeg" or name == "RootFoot" or name == "Leg" or name == "Foot" then
+			local phase = if side < 0 then 0 else math.pi
+			if offset.Z < -0.4 then phase += math.pi end
+			local stride = math.sin(enemy.phase + phase) * 0.35 * gait
+			local hip = Vector3.new(offset.X, -1.1 * scale, offset.Z)
+			offset = CFrame.new(hip) * CFrame.Angles(stride, 0, 0) * CFrame.new(-hip) * offset
+		elseif name == "BranchArm" or name == "KnottedFist" then
+			local swing = if side > 0 then rightArm else leftArm
+			swing -= math.sin(enemy.phase + (if side > 0 then 0 else math.pi)) * 0.2 * gait
+			local shoulder = Vector3.new(side * 1.7 * scale, 0.85 * scale, 0)
+			offset = CFrame.new(shoulder) * CFrame.Angles(swing, 0, 0) * CFrame.new(-shoulder) * offset
+		elseif name == "Head" or name == "Eye" or name == "Brow" or string.find(name, "Crown") or name == "AncientCrest" then
+			local neck = Vector3.new(0, 1.3 * scale, 0)
+			offset = CFrame.new(neck) * CFrame.Angles(-lean * 0.7, -twist * 0.25, 0) * CFrame.new(-neck) * offset
+		end
+		piece.part.Size = piece.size * shrink
+		piece.part.Transparency = piece.transparency + (1 - piece.transparency) * dead
+		piece.part.CFrame = body * (CFrame.new(offset.Position * shrink) * offset.Rotation)
+	end
+end
+
+function EnemyView.start(): () -> ()
+	local container = Instance.new("Folder")
+	container.Name = "LocalGuardianVisuals"
+	container:SetAttribute("CosmeticOnly", true)
+	container.Parent = workspace
+	local enemies: { [Model]: Enemy } = {}
+	local folders: { [Instance]: FolderWatch } = {}
+	local stopped = false
+	local function removeEnemy(item: Instance)
+		if not item:IsA("Model") then return end
+		local enemy = enemies[item]
+		if not enemy then return end
+		disconnect(enemy.connections)
+		for source in enemy.pieces do removePiece(enemy, source) end
+		enemy.visual:Destroy()
+		enemies[item] = nil
+	end
+	local function addEnemy(item: Instance)
+		if stopped or not item:IsA("Model") or enemies[item] then return end
+		local visual = Instance.new("Model")
+		visual.Name = item.Name
+		visual:SetAttribute("CosmeticOnly", true)
+		visual.Parent = container
+		local enemy: Enemy = { model = item, visual = visual, pieces = {}, connections = {}, root = nil,
+			frame = nil, dirty = true, phase = 0, state = "", changedAt = 0 }
+		enemies[item] = enemy
+		table.insert(enemy.connections, item.DescendantAdded:Connect(function() enemy.dirty = true end))
+		table.insert(enemy.connections, item.DescendantRemoving:Connect(function(descendant)
+			if descendant:IsA("BasePart") then removePiece(enemy, descendant) end
+		end))
+	end
+	local function detach(folder: Instance, watch: FolderWatch)
+		for _, child in folder:GetChildren() do removeEnemy(child) end
+		-- A folder may have been removed along with its children before this event.
+		for model in enemies do if model.Parent == folder then removeEnemy(model) end end
+		for index = #watch.connections, 2, -1 do watch.connections[index]:Disconnect(); table.remove(watch.connections, index) end
+		watch.active = false
+	end
+	local function refreshFolder(folder: Instance, watch: FolderWatch)
+		local active = not stopped and folder.Parent == workspace and folder.Name == "WildbondGuardians"
+		if watch.active and not active then detach(folder, watch) end
+		if active and not watch.active then
+			watch.active = true
+			table.insert(watch.connections, folder.ChildAdded:Connect(addEnemy))
+			table.insert(watch.connections, folder.ChildRemoved:Connect(removeEnemy))
+			for _, child in folder:GetChildren() do addEnemy(child) end
+		end
+	end
+	local function watchFolder(folder: Instance)
+		if stopped or folder == container or not folder:IsA("Folder") or folders[folder] then return end
+		local watch: FolderWatch = { active = false, connections = {} }
+		folders[folder] = watch
+		table.insert(watch.connections, folder:GetPropertyChangedSignal("Name"):Connect(function() refreshFolder(folder, watch) end))
+		refreshFolder(folder, watch)
+	end
+	local function removeFolder(folder: Instance)
+		local watch = folders[folder]
+		if not watch then return end
+		if watch.active then detach(folder, watch) end
+		disconnect(watch.connections)
+		folders[folder] = nil
+	end
+	for _, folder in workspace:GetChildren() do watchFolder(folder) end
+	local added = workspace.ChildAdded:Connect(watchFolder)
+	local removed = workspace.ChildRemoved:Connect(removeFolder)
+	local render = RunService.RenderStepped:Connect(function(dt: number)
+		local now = workspace:GetServerTimeNow()
+		for model, enemy in enemies do
+			if model.Parent then animate(enemy, dt, now, container) else removeEnemy(model) end
+		end
+	end)
+	return function()
+		if stopped then return end
+		stopped = true
+		render:Disconnect(); added:Disconnect(); removed:Disconnect()
+		for folder in folders do removeFolder(folder) end
+		for model in enemies do removeEnemy(model) end
+		container:Destroy()
+	end
+end
+
+return EnemyView
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="19">
           <Properties>
             <string name="Name">Hud</string>
             <string name="Source"><![CDATA[--!nonstrict
@@ -1782,6 +2395,7 @@ local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
+local ContextActionService = game:GetService("ContextActionService")
 
 local Hud = {}
 local ink = Color3.fromRGB(30, 52, 55)
@@ -1827,25 +2441,33 @@ local function button(parent, text, position, size, callback)
 	return item
 end
 
-function Hud.start(command, catalog, rules)
+function Hud.start(command, catalog, rules, dodgeRules)
 	rules = rules or { meleeCooldown = 0.6, petCooldown = 3.2 }
+	dodgeRules = dodgeRules or { cooldown = 4, doubleTapWindow = 0.28 }
 	local player = Players.LocalPlayer
 	local destroyed = false
 	local currentState, stateClock, refreshTiming, refreshCooldowns
 	local screen = make("ScreenGui", { Name = "WildbondHUD", ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling }, player:WaitForChild("PlayerGui"))
 	local gui = make("Frame", { Name = "Canvas", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1) }, screen)
 	local scale = make("UIScale", { Scale = 1 }, gui)
-	local attackButton, bondButton
+	local attackButton, bondButton, dodgeButton, hotbar, companionToggle
 	local function resize()
 		local camera = workspace.CurrentCamera
 		if camera then
 			scale.Scale = math.clamp(math.min(camera.ViewportSize.X / 850, camera.ViewportSize.Y / 480), 0.5, 1)
 			gui.Size = UDim2.fromScale(1 / scale.Scale, 1 / scale.Scale)
-			if attackButton and UserInputService.TouchEnabled then
-				-- Keep the real pixel gap above Roblox's jump control as the HUD scales.
-				local controlTop = -math.round(194 / scale.Scale)
-				attackButton.Position = UDim2.new(1, -134, 1, controlTop)
-				bondButton.Position = UDim2.new(1, -260, 1, controlTop)
+			if attackButton then
+				local hotbarBottom = if UserInputService.TouchEnabled then 145 else 76 * scale.Scale
+				-- Keep at least the former 194-pixel native-jump gap, and put
+				-- the action row above the hotbar at every scale and aspect ratio.
+				local hintGap = if UserInputService.TouchEnabled then 12 else 36 * scale.Scale
+				local rowTop = hotbarBottom + 132 * scale.Scale + hintGap
+				if UserInputService.TouchEnabled then rowTop = math.max(194, rowTop) end
+				attackButton.Position = UDim2.new(1, -134, 1, -math.round(rowTop / scale.Scale))
+				bondButton.Position = UDim2.new(1, -260, 1, attackButton.Position.Y.Offset)
+				dodgeButton.Position = UDim2.new(1, -134, 1, -math.round((rowTop + 58 * scale.Scale + 20) / scale.Scale))
+				hotbar.Position = UDim2.new(0.5, 0, 1, -math.round(hotbarBottom / scale.Scale))
+				if UserInputService.TouchEnabled then companionToggle.Position = UDim2.new(1, -340, 0, 18) end
 			end
 		end
 	end
@@ -1868,7 +2490,7 @@ function Hud.start(command, catalog, rules)
 	}, gui)
 	round(mission, 16)
 	label(mission, "WILDBOND", UDim2.fromOffset(18, 12), UDim2.fromOffset(280, 26), 23, mint)
-	label(mission, "GREYWATER ISLE  /  PVE ALPHA", UDim2.fromOffset(18, 42), UDim2.fromOffset(280, 18), 10)
+	label(mission, "GREYWATER REACH  /  PVE ALPHA", UDim2.fromOffset(18, 42), UDim2.fromOffset(280, 18), 10)
 	local objective = label(mission, "Find the hunt board in the village.", UDim2.fromOffset(18, 70), UDim2.fromOffset(284, 42), 16)
 	local rows = {}
 	for index, target in targetInfo do
@@ -1954,45 +2576,108 @@ function Hud.start(command, catalog, rules)
 			command:FireServer(action, pet.id)
 		end)
 	end
-	button(gui, "Companions", UDim2.new(1, -174, 0, 105), UDim2.fromOffset(156, 42), function()
+	companionToggle = button(gui, "Companions", UDim2.new(1, -174, 0, 105), UDim2.fromOffset(156, 42), function()
 		petPanel.Visible = not petPanel.Visible
 	end)
 
-	local lastAttack = -math.huge
+	local lastAttackRequest, attackReadyAt = -math.huge, 0
 	local lastBondRequest, bondReadyAt = -math.huge, 0
+	local lastDodgeRequest, dodgeReadyAt = -math.huge, 0
+	local function focused()
+		return destroyed or UserInputService:GetFocusedTextBox() ~= nil
+	end
 	local function attack()
-		if os.clock() - lastAttack < rules.meleeCooldown then return end
-		lastAttack = os.clock()
+		if focused() then return end
+		local now = os.clock()
+		if now < attackReadyAt or now - lastAttackRequest < rules.meleeCooldown then return end
+		lastAttackRequest = now
 		command:FireServer("attack")
 	end
 	local function bond()
+		if focused() then return end
 		local now = os.clock()
 		if now < bondReadyAt or now - lastBondRequest < 0.2 then return end
 		lastBondRequest = now
 		command:FireServer("bond")
 	end
+	local function dodge()
+		if focused() then return end
+		local now = os.clock()
+		if now < dodgeReadyAt or now - lastDodgeRequest < 0.2 then return end
+		local character = player.Character
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+		local root = character and character:FindFirstChild("HumanoidRootPart")
+		if not humanoid or humanoid.Health <= 0 or not root or not root:IsA("BasePart") then return end
+		local direction = humanoid.MoveDirection * Vector3.new(1, 0, 1)
+		if direction.Magnitude < 0.01 then direction = root.CFrame.LookVector * Vector3.new(1, 0, 1) end
+		if direction.Magnitude < 0.01 then return end
+		lastDodgeRequest = now
+		command:FireServer("dodge", direction.Unit)
+	end
 	attackButton = button(gui, "STRIKE", UDim2.new(1, -134, 1, if UserInputService.TouchEnabled then -194 else -96), UDim2.fromOffset(116, 66), attack)
 	bondButton = button(gui, "BOND", UDim2.new(1, -260, 1, if UserInputService.TouchEnabled then -194 else -96), UDim2.fromOffset(116, 66), bond)
+	dodgeButton = button(gui, "DODGE", UDim2.new(1, -134, 1, if UserInputService.TouchEnabled then -276 else -174), UDim2.fromOffset(116, 58), dodge)
+	-- Slot 1 is a temporary companion command while class skills are being built.
+	-- Empty slots deliberately have no click or key actions.
+	hotbar = make("Frame", { Name = "SkillHotbar", AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -76), Size = UDim2.fromOffset(566, 66), BackgroundTransparency = 1 }, gui)
+	local slots = {}
+	for index = 1, 8 do
+		local slot = make(if index == 1 then "TextButton" else "TextLabel", {
+			Name = "SkillSlot" .. tostring(index), Position = UDim2.fromOffset((index - 1) * 72, 0), Size = UDim2.fromOffset(62, 62),
+			Text = "", BackgroundColor3 = if index == 1 then ink else Color3.fromRGB(43, 58, 61),
+			BackgroundTransparency = if index == 1 then 0.08 else 0.25, BorderSizePixel = 0,
+		}, hotbar)
+		round(slot, 10)
+		label(slot, tostring(index), UDim2.fromOffset(6, 3), UDim2.fromOffset(18, 16), 11, if index == 1 then mint else Color3.fromRGB(160, 170, 171))
+		slots[index] = label(slot, if index == 1 then "Bond" else "Unlearned", UDim2.fromOffset(3, 22), UDim2.fromOffset(56, 30), if index == 1 then 13 else 9, if index == 1 then cream else Color3.fromRGB(160, 170, 171))
+		if index == 1 then slot.Activated:Connect(bond) end
+	end
 	refreshCooldowns = function()
 		local now = os.clock()
-		for _, entry in { { attackButton, lastAttack + rules.meleeCooldown, "STRIKE" }, { bondButton, bondReadyAt, "BOND" } } do
+		for _, entry in { { attackButton, attackReadyAt, "STRIKE" }, { bondButton, bondReadyAt, "BOND" }, { dodgeButton, dodgeReadyAt, "DODGE" } } do
 			local remaining = math.max(0, entry[2] - now)
 			entry[1].Text = if remaining > 0 then string.format("%s %.1f", entry[3], remaining) else entry[3]
 			entry[1].BackgroundColor3 = if remaining > 0 then amber else mint
 		end
+		local remaining = math.max(0, bondReadyAt - now)
+		slots[1].Text = if remaining > 0 then string.format("Bond\n%.1f", remaining) else "Bond"
 	end
 	resize()
-	label(gui, if UserInputService.TouchEnabled then "STRIKE + BOND · move out of red circles" else "F / R2 strike · Q / L2 bond · E interact", UDim2.new(0.5, -170, 1, -87), UDim2.fromOffset(340, 20), 11).TextXAlignment = Enum.TextXAlignment.Center
+	local controlsHint = label(gui, "Click / R2 strike · 1 / L2 companion · double Space / B dodge", UDim2.new(0.5, -245, 1, -166), UDim2.fromOffset(490, 20), 10)
+	controlsHint.TextXAlignment = Enum.TextXAlignment.Center
+	controlsHint.Visible = not UserInputService.TouchEnabled
+	local lastSpace = -math.huge
 	local inputConnection = UserInputService.InputBegan:Connect(function(input, processed)
-		if processed then return end
-		if input.KeyCode == Enum.KeyCode.F or input.KeyCode == Enum.KeyCode.ButtonR2 or input.UserInputType == Enum.UserInputType.MouseButton1 then
+		-- ContextActionService alone owns Space history. Roblox's normal jump
+		-- can mark the first tap processed after our action returned Pass.
+		if processed or focused() then return end
+		if input.KeyCode == Enum.KeyCode.ButtonR2 or input.UserInputType == Enum.UserInputType.MouseButton1 then
 			attack()
-		elseif input.KeyCode == Enum.KeyCode.Q or input.KeyCode == Enum.KeyCode.ButtonL2 then
+		elseif input.KeyCode == Enum.KeyCode.One or input.KeyCode == Enum.KeyCode.ButtonL2 then
 			bond()
+		elseif input.KeyCode == Enum.KeyCode.ButtonB then
+			dodge()
 		elseif input.KeyCode == Enum.KeyCode.C or input.KeyCode == Enum.KeyCode.ButtonY then
 			petPanel.Visible = not petPanel.Visible
 		end
 	end)
+	local spaceAction = "WildbondDoubleSpaceDodge"
+	ContextActionService:BindActionAtPriority(spaceAction, function(_, state)
+		if focused() then
+			lastSpace = -math.huge
+			return Enum.ContextActionResult.Pass
+		end
+		if state ~= Enum.UserInputState.Begin then return Enum.ContextActionResult.Pass end
+		local now = os.clock()
+		if now - lastSpace <= (dodgeRules.doubleTapWindow or 0.28) then
+			lastSpace = -math.huge
+			dodge()
+			-- The first tap remains Roblox's normal jump; the second is the dodge.
+			return Enum.ContextActionResult.Sink
+		end
+		lastSpace = now
+		return Enum.ContextActionResult.Pass
+	end, false, Enum.ContextActionPriority.High.Value + 10, Enum.KeyCode.Space)
 
 	local waypoint = make("Part", { Name = "LocalHuntWaypoint", Size = Vector3.new(1.2, 8, 1.2), Anchored = true, CanCollide = false, CanTouch = false, CanQuery = false, Material = Enum.Material.Neon, Color = mint, Transparency = 0.65 }, workspace)
 	local waypointBillboard = make("BillboardGui", { Size = UDim2.fromOffset(210, 50), StudsOffset = Vector3.new(0, 5, 0), AlwaysOnTop = true, MaxDistance = 400 }, waypoint)
@@ -2003,10 +2688,10 @@ function Hud.start(command, catalog, rules)
 	local welcome = make("Frame", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(460, 312), BackgroundColor3 = ink, BorderSizePixel = 0 }, gui)
 	welcome.ZIndex = 10
 	round(welcome, 18)
-	label(welcome, "A small island. A wild bond.", UDim2.fromOffset(26, 23), UDim2.fromOffset(408, 54), 26, mint)
-	label(welcome, "Take a hunt at the village board. Strike nearby guardians and dodge their red circles. Send your companion with Q / L2 or BOND.\n\nHold to collect each crystal (0.35s), then return to camp for 60 shells. Unlock companions with earned shells.", UDim2.fromOffset(26, 87), UDim2.fromOffset(408, 127), 15)
+	label(welcome, "A woodland trail. A wild bond.", UDim2.fromOffset(26, 23), UDim2.fromOffset(408, 54), 26, mint)
+	label(welcome, "Take a hunt at the village board. Click / R2 to strike. Double-tap Space or press B / DODGE to evade. Slot 1 / L2 temporarily commands your companion.\n\nSlots 2–8 await learned class skills. Collect each crystal, then return to camp for 60 shells.", UDim2.fromOffset(26, 87), UDim2.fromOffset(408, 127), 15)
 	label(welcome, "Early prototype · progress resets when you leave.\nCompanions share combat strength. No purchases enabled.", UDim2.fromOffset(26, 219), UDim2.fromOffset(408, 37), 11, amber)
-	button(welcome, "Explore Greywater", UDim2.fromOffset(26, 266), UDim2.fromOffset(408, 34), function()
+	button(welcome, "Explore Greywater Reach", UDim2.fromOffset(26, 266), UDim2.fromOffset(408, 34), function()
 		welcome:Destroy()
 	end)
 	for _, child in welcome:GetDescendants() do
@@ -2014,9 +2699,19 @@ function Hud.start(command, catalog, rules)
 	end
 
 	local api = {}
+	function api:meleeAccepted(cooldown)
+		if destroyed then return end
+		attackReadyAt = os.clock() + (cooldown or rules.meleeCooldown)
+		refreshCooldowns()
+	end
 	function api:bondAccepted(cooldown)
 		if destroyed then return end
 		bondReadyAt = os.clock() + (cooldown or rules.petCooldown)
+		refreshCooldowns()
+	end
+	function api:dodgeAccepted(cooldown)
+		if destroyed then return end
+		dodgeReadyAt = os.clock() + (cooldown or dodgeRules.cooldown)
 		refreshCooldowns()
 	end
 	function api:render(state, message, success)
@@ -2065,6 +2760,7 @@ function Hud.start(command, catalog, rules)
 		toastVersion += 1
 		resizeConnection:Disconnect()
 		inputConnection:Disconnect()
+		ContextActionService:UnbindAction(spaceAction)
 		characterConnection:Disconnect()
 		if healthConnection then healthConnection:Disconnect() end
 		waypoint:Destroy()
@@ -2077,10 +2773,191 @@ return Hud
 ]]></string>
           </Properties>
         </Item>
+        <Item class="ModuleScript" referent="20">
+          <Properties>
+            <string name="Name">PlayerCombatView</string>
+            <string name="Source"><![CDATA[--!nonstrict
+-- Original, local combat poses. No uploaded animations or physical root movement.
+-- Accepted server effects are the only callers of attackFx and dodgeFx.
+local RunService = game:GetService("RunService")
+local PlayerCombatView = {}
+local swingDuration, dodgeDuration = 0.24, 0.22
+
+local function finiteVector(value)
+	return typeof(value) == "Vector3" and value.X == value.X and value.Y == value.Y and value.Z == value.Z
+		and math.abs(value.X) < math.huge and math.abs(value.Y) < math.huge and math.abs(value.Z) < math.huge
+end
+
+local function sameFrame(a, b)
+	return (a.Position - b.Position).Magnitude < 0.0001
+		and (a.LookVector - b.LookVector).Magnitude < 0.0001 and (a.UpVector - b.UpVector).Magnitude < 0.0001
+end
+
+function PlayerCombatView.start(player)
+	local stopped = false
+	local character = player.Character
+	local shoulder, torso
+	local attackStarted, dodgeStarted, dodgeDirection, swingDirection
+	local states = {}
+	local effects = Instance.new("Folder")
+	effects.Name = "LocalPlayerCombatEffects"
+	effects:SetAttribute("CosmeticOnly", true)
+	effects.Parent = workspace
+	local arc = {}
+	for index = 1, 7 do
+		local shard = Instance.new("WedgePart")
+		shard.Name = "SwingArc" .. tostring(index)
+		shard.Anchored = true
+		shard.CanCollide, shard.CanTouch, shard.CanQuery = false, false, false
+		shard.CastShadow = false
+		shard.Size = Vector3.new(0.1, 0.14, 0.8)
+		shard.Material = Enum.Material.Neon
+		shard.Color = Color3.fromRGB(230, 241, 212)
+		shard.Transparency = 1
+		shard.Parent = effects
+		arc[index] = shard
+	end
+	local function hideArc()
+		for _, shard in arc do shard.Transparency = 1 end
+	end
+	local function restorePose()
+		for joint, state in states do
+			-- Animate may have produced a new base pose since our last frame.
+			if joint.Parent and state.applied and sameFrame(joint.Transform, state.applied) then
+				joint.Transform = state.base
+			end
+		end
+		table.clear(states)
+	end
+	local function discoverJoints()
+		shoulder, torso = nil, nil
+		if not character then return end
+		for _, descendant in character:GetDescendants() do
+			if descendant:IsA("Motor6D") then
+				if descendant.Name == "RightShoulder" or descendant.Name == "Right Shoulder" then shoulder = descendant end
+				if descendant.Name == "Root" or descendant.Name == "RootJoint" then torso = descendant end
+			end
+		end
+	end
+	local function resetCharacter(nextCharacter)
+		restorePose()
+		hideArc()
+		attackStarted, dodgeStarted, dodgeDirection, swingDirection = nil, nil, nil, nil
+		character = nextCharacter
+		discoverJoints()
+	end
+	discoverJoints()
+	local added = player.CharacterAdded:Connect(resetCharacter)
+	local removed = player.CharacterRemoving:Connect(function(oldCharacter)
+		if character == oldCharacter then resetCharacter(nil) end
+	end)
+
+	local function compose(joint, offset)
+		if not joint or not joint.Parent then return end
+		local current = joint.Transform
+		local previous = states[joint]
+		-- Unanimated/custom rigs retain Transform, while Animate refreshes it.
+		-- Remove our previous contribution only when it is still present.
+		if previous and sameFrame(current, previous.applied) then current = previous.base end
+		joint.Transform = current * offset
+		states[joint] = { base = current, applied = joint.Transform }
+	end
+	local function rootPart()
+		local root = character and character:FindFirstChild("HumanoidRootPart")
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+		if not root or not root:IsA("BasePart") or not humanoid or humanoid.Health <= 0 then return nil end
+		return root
+	end
+	local function updatePose()
+		if stopped then return end
+		local root = rootPart()
+		if not root then
+			restorePose()
+			hideArc()
+			attackStarted, dodgeStarted = nil, nil
+			return
+		end
+		if not shoulder or not shoulder.Parent or not torso or not torso.Parent then discoverJoints() end
+		local now = os.clock()
+		local attackProgress = if attackStarted then (now - attackStarted) / swingDuration else 1
+		local dodgeProgress = if dodgeStarted then (now - dodgeStarted) / dodgeDuration else 1
+		if attackProgress >= 1 then attackStarted = nil end
+		if dodgeProgress >= 1 then dodgeStarted = nil end
+		if not attackStarted and not dodgeStarted then
+			restorePose()
+			hideArc()
+			return
+		end
+		local shoulderPose, torsoPose = CFrame.identity, CFrame.identity
+		if attackStarted then
+			local strength = math.sin(math.clamp(attackProgress, 0, 1) * math.pi)
+			-- A short shoulder wind-up, cross-body swing and return to Animate.
+			local sweep = math.rad(105) * (1 - 2 * attackProgress)
+			shoulderPose = CFrame.Angles(-math.rad(35) * strength, sweep * strength, math.rad(32) * strength)
+			torsoPose = CFrame.Angles(0, -math.rad(15) * strength, 0)
+			local direction = swingDirection or root.CFrame.LookVector
+			local flat = direction * Vector3.new(1, 0, 1)
+			if flat.Magnitude < 0.01 then flat = Vector3.new(0, 0, -1) end
+			local frame = CFrame.lookAt(root.Position, root.Position + flat.Unit)
+			for index, shard in arc do
+				local trailProgress = math.clamp(attackProgress - (index - 1) * 0.035, 0, 1)
+				local angle = math.rad(-68 + trailProgress * 136)
+				shard.CFrame = frame * CFrame.new(math.sin(angle) * 3, 0.8, -math.cos(angle) * 3) * CFrame.Angles(0, -angle, math.rad(14))
+				shard.Transparency = if attackProgress >= 0.12 and attackProgress <= 0.82 then 0.35 + (index - 1) * 0.075 else 1
+			end
+		else
+			hideArc()
+		end
+		if dodgeStarted then
+			local strength = math.sin(math.clamp(dodgeProgress, 0, 1) * math.pi)
+			local localDirection = root.CFrame:VectorToObjectSpace(dodgeDirection or root.CFrame.LookVector)
+			torsoPose *= CFrame.Angles(-localDirection.Z * math.rad(24) * strength, 0, -localDirection.X * math.rad(28) * strength)
+			shoulderPose *= CFrame.Angles(-math.rad(30) * strength, 0, math.rad(15) * strength)
+		end
+		compose(shoulder, shoulderPose)
+		compose(torso, torsoPose)
+	end
+	-- Animator evaluates before PreSimulation, so the additive pose survives it.
+	local poseConnection = (RunService.PreSimulation or RunService.RenderStepped):Connect(updatePose)
+	local function attackFx(targetPosition)
+		if stopped then return end
+		local root = rootPart()
+		if not root then return end
+		swingDirection = root.CFrame.LookVector
+		if finiteVector(targetPosition) then
+			local delta = (targetPosition - root.Position) * Vector3.new(1, 0, 1)
+			if delta.Magnitude > 0.01 and delta.Magnitude < 40 then swingDirection = delta.Unit end
+		end
+		attackStarted = os.clock()
+	end
+	local function dodgeFx(direction)
+		if stopped or not rootPart() or not finiteVector(direction) then return end
+		local flat = direction * Vector3.new(1, 0, 1)
+		if flat.Magnitude < 0.01 then return end
+		dodgeDirection = flat.Unit
+		dodgeStarted = os.clock()
+	end
+	local function cleanup()
+		if stopped then return end
+		stopped = true
+		poseConnection:Disconnect()
+		added:Disconnect()
+		removed:Disconnect()
+		restorePose()
+		effects:Destroy()
+		character = nil
+	end
+	return cleanup, attackFx, dodgeFx
+end
+
+return PlayerCombatView
+]]></string>
+          </Properties>
+        </Item>
       </Item>
     </Item>
   </Item>
-  <Item class="Workspace" referent="17">
+  <Item class="Workspace" referent="21">
     <Properties>
       <string name="Name">Workspace</string>
       <float name="Gravity">196.2</float>

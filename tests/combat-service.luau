@@ -8,8 +8,16 @@ local Rules = require("../src/shared/CombatRules")
 local Instance, Vector3 = roblox.Instance, roblox.Vector3
 local checks = 0
 local activeHarness
-roblox.implementMethod("Workspace", "Raycast", function()
-	return if activeHarness.blocked then { Instance = activeHarness.obstacle } else nil
+roblox.implementMethod("Workspace", "GetServerTimeNow", function() return activeHarness.now end)
+roblox.implementMethod("Workspace", "Raycast", function(_, from, direction)
+	if direction.Y < -1 then
+		return if activeHarness.noGround then nil else { Instance = activeHarness.obstacle, Position = Vector3.new(from.X, 4.1, from.Z) }
+	end
+	if activeHarness.steer and direction.Magnitude < 5 and direction.Z > 0.01 and math.abs(direction.X) < 0.01 then
+		return { Instance = activeHarness.obstacle }
+	end
+	return if activeHarness.blocked or (activeHarness.movementBlocked and direction.Magnitude < 5)
+		then { Instance = activeHarness.obstacle } else nil
 end)
 roblox.implementMethod("Humanoid", "TakeDamage", function(humanoid, damage)
 	humanoid.Health = math.max(0, humanoid.Health - damage)
@@ -124,15 +132,17 @@ for _, definition in Rules.foes do
 end
 local moss = h.models.moss
 h.states[first].active = false
-check(not h.service.attack(first) and moss:GetAttribute("Health") == 140, "Inactive hunt cannot attack")
+check(h.service.attack(first) and moss:GetAttribute("Health") == 140, "Inactive hunter can practice a swing but cannot damage an enemy")
 h.states[first].active, firstHealth.Health = true, 0
 check(not h.service.attack(first), "Dead character cannot attack")
-firstHealth.Health, firstRoot.Position = 100, Vector3.new(-45, 7, -3)
-check(not h.service.attack(first), "Server rejects targets outside melee range")
-h.now, firstRoot.Position, h.blocked = 0.61, Vector3.new(-45, 7, -11), true
-check(not h.service.attack(first) and moss:GetAttribute("Health") == 140, "Ray obstruction prevents melee damage")
-h.blocked, h.now = false, 1.22
-check(h.service.attack(first) and moss:GetAttribute("Health") == 130, "Accepted melee applies ten damage")
+firstHealth.Health, firstRoot.Position, h.now = 100, Vector3.new(-45, 7, -3), 0.61
+check(h.service.attack(first) and moss:GetAttribute("Health") == 140, "Cosmetic whiff outside melee range cannot damage a guardian")
+h.now, firstRoot.Position, h.blocked = 1.22, Vector3.new(-45, 7, -11), true
+check(h.service.attack(first) and moss:GetAttribute("Health") == 140, "Ray obstruction prevents melee damage while allowing swing animation")
+h.blocked, h.now = false, 1.83
+local hit, _, hitPosition = h.service.attack(first)
+check(hit and moss:GetAttribute("Health") == 130 and hitPosition == moss.PrimaryPart.Position,
+	"Accepted melee applies ten damage and returns an authoritative FX location")
 check(moss:GetAttribute("MaxHealth") == 140, "Nearby active hunters do not inflate enemy health before contributing")
 check(not h.service.attack(first) and moss:GetAttribute("Health") == 130, "Repeated attack in one frame is throttled")
 check(h.service.attack(second) and moss:GetAttribute("MaxHealth") == 231 and moss:GetAttribute("Health") == 211,
@@ -200,7 +210,7 @@ h.service.destroy()
 -- Pet acceptance emits one authoritative position; damage waits and all pets match.
 h = harness()
 first, firstRoot = h:makePlayer("Companion", Vector3.new(-45, 7, -3))
-check(not h.service.attack(first), "Pet test begins outside melee reach")
+check(h.service.attack(first) and h.models.moss:GetAttribute("Health") == 140, "Pet test begins with a harmless swing outside melee reach")
 for _, id in { "mosswolf", "emberfox", "tidecub" } do
 	h.states[first].equipped = id
 	local before, at = h.models.moss:GetAttribute("Health"), h.now
@@ -271,68 +281,169 @@ stale()
 check(h.models.moss:GetAttribute("Health") == 140 and #h.credits == 1, "Earlier lifetime cannot damage or credit a respawned guardian")
 h.service.destroy()
 
--- A killing blow removes an unresolved warning before its damage can land.
+-- Idle creatures patrol a local home area, with moving authored limbs and collider.
 h = harness()
-first, _, firstHealth = h:makePlayer("Interrupt")
+moss = h.models.moss
+local spawn = moss:GetAttribute("HomePosition")
+local initialHead = moss:FindFirstChild("Head").CFrame.Position
 h:tick(0.1)
-h:tick(0.901)
-check(h.folder:FindFirstChild("SlamWarning"), "Interrupt case begins during a real pending warning")
+check(moss:GetAttribute("State") == "Patrol" and (moss.PrimaryPart.Position - spawn).Magnitude > 0.1,
+	"Unengaged foe walks instead of standing still")
+check((moss:FindFirstChild("Head").CFrame.Position - initialHead).Magnitude > 0.1,
+	"Server movement transports the complete authored model")
+for index = 2, 300 do h:tick(index * 0.1) end
+check((moss.PrimaryPart.Position - spawn).Magnitude <= Rules.patrolRadius + 0.01,
+	"Idle patrol stays inside its declared home radius")
+h.service.destroy()
+
+-- Collision corridors and absent floor are rejected before moving any geometry.
+for _, blockedBy in { "wall", "edge" } do
+	h = harness()
+	moss = h.models.moss
+	spawn = moss.PrimaryPart.Position
+	if blockedBy == "wall" then h.blocked = true else h.noGround = true end
+	for index = 1, 20 do h:tick(index * 0.1) end
+	check((moss.PrimaryPart.Position - spawn).Magnitude < 0.001, "Patrol cannot cross a " .. blockedBy)
+	h.service.destroy()
+end
+
+-- A local obstacle diverts chase sideways rather than being crossed.
+h = harness()
+first = h:makePlayer("AroundPillar", Vector3.new(-45, 7, -3))
+h.steer = true
+spawn = h.models.moss.PrimaryPart.Position
+h:tick(0.1)
+check(math.abs(h.models.moss.PrimaryPart.Position.X - spawn.X) > 0.1 and h.models.moss.PrimaryPart.Position.Z > spawn.Z,
+	"Blocked forward corridor selects a clear diagonal steering route")
+h.service.destroy()
+
+-- Hunters outside the home corral cannot lure a creature beyond its leash.
+h = harness()
+first = h:makePlayer("TooFar", Vector3.new(-45, 7, 12))
+h.models.moss.PrimaryPart.Position = Vector3.new(-45, 7, -8) -- Hunter is within 22 of the foe, but 29 from its home.
+h:tick(0.1)
+check(h.models.moss:GetAttribute("State") == "Patrol", "An eligible player beyond the home leash cannot acquire aggro")
+h.service.destroy()
+
+-- Eligible hunters are chased, while idle spectators cannot pull encounters.
+h = harness()
+first, firstRoot, firstHealth = h:makePlayer("Pursued", Vector3.new(-45, 7, -3))
+second = h:makePlayer("Observer", Vector3.new(-45, 7, -16), false)
+spawn = h.models.moss.PrimaryPart.Position
+h:tick(0.1)
+check(h.models.moss:GetAttribute("State") == "Chase" and h.models.moss.PrimaryPart.Position.Z > spawn.Z,
+	"Foe acquires and walks toward the eligible hunter")
+check(math.abs((h.models.moss.PrimaryPart.Position - spawn).Magnitude - Rules.chaseSpeed * 0.1) < 0.001,
+	"Chase movement obeys server speed rather than teleporting")
+for index = 2, 30 do h:tick(index * 0.1) end
+check(firstHealth.Health < 100 and h.models.moss:GetAttribute("State") ~= "Patrol",
+	"Chase closes to basic attack range and deals actual damage")
+check(h.folder:FindFirstChild("SlamWarning") == nil, "Small guardian attacks use melee, without the old repeated AoE")
+h.service.destroy()
+
+-- A basic strike captures character and facing, has windup, and commits once.
+for _, reason in { "none", "distance", "behind", "obstruction", "dead", "respawn", "inactive", "dodge" } do
+	h = harness()
+	first, firstRoot, firstHealth = h:makePlayer("MeleeTarget", Vector3.new(-45, 7, -13))
+	h:tick(0.1)
+	moss = h.models.moss
+	check(moss:GetAttribute("State") == "MeleeWindup" and firstHealth.Health == 100,
+		"Basic strike visibly winds up before damage")
+	local impact = moss:GetAttribute("ActionStartedAt") + moss:GetAttribute("ActionDuration")
+	local enemyPosition = moss.PrimaryPart.Position
+	if reason == "distance" then firstRoot.Position = Vector3.new(-45, 7, -3)
+	elseif reason == "behind" then firstRoot.Position = enemyPosition - Vector3.new(0, 0, 3)
+	elseif reason == "obstruction" then h.blocked = true
+	elseif reason == "dead" then firstHealth.Health = 0
+	elseif reason == "respawn" then first.Character = h:makePlayer("Replacement").Character
+	elseif reason == "inactive" then h.states[first].active = false
+	elseif reason == "dodge" then first.Character:SetAttribute("DodgeUntil", impact + 0.01) end
+	h:tick(impact - 0.001)
+	check(firstHealth.Health == (if reason == "dead" then 0 else 100), "Windup cannot hit before its exact boundary")
+	h:tick(impact)
+	check(firstHealth.Health == (if reason == "none" then 100 - Rules.foes[1].meleeDamage elseif reason == "dead" then 0 else 100),
+		"Basic strike revalidates target at impact after " .. reason)
+	check(moss:GetAttribute("State") == "MeleeRecover", "Committed swing enters a readable recovery")
+	h:tick(impact + 0.001)
+	check(firstHealth.Health == (if reason == "none" then 100 - Rules.foes[1].meleeDamage elseif reason == "dead" then 0 else 100),
+		"A committed swing cannot damage twice")
+	h.service.destroy()
+end
+
+-- Killing during a melee animation cancels the pending hit.
+h = harness()
+first, _, firstHealth = h:makePlayer("InterruptMelee", Vector3.new(-45, 7, -13))
+h:tick(0.1)
+check(h.models.moss:GetAttribute("State") == "MeleeWindup", "Death test begins during a basic windup")
 h:finish(first, "moss")
-check(h.folder:FindFirstChild("SlamWarning") == nil, "Guardian defeat immediately destroys its pending warning")
-h:tick(h.now + 0.1)
-check(firstHealth.Health == 100, "Canceled warning cannot deal post-mortem damage")
+check(h.models.moss:GetAttribute("State") == "Dead", "Death is replicated for the fall animation")
+h:tick(h.now + 1)
+check(firstHealth.Health == 100, "Defeated foe cannot finish its delayed basic attack")
 h.service.destroy()
 
--- Warning timing, captured target positions, boss alternation, and idle reset.
+-- Disengagement preserves damage briefly, then walks home before resetting.
 h = harness()
-first, firstRoot, firstHealth = h:makePlayer("Dodge")
-second, _, secondHealth = h:makePlayer("Inactive", nil, false)
-h:tick(0.1)
-h:tick(0.899)
-check(h.folder:FindFirstChild("SlamWarning") == nil, "Encounter starts with a safe first-warning delay")
-h:tick(0.901)
-check(h.models.moss:GetAttribute("Status") == "Windup" and h.folder:FindFirstChild("SlamWarning"), "Warning appears before damage")
-firstRoot.Position = Vector3.new(-45, 7, -5)
-h:tick(1.802)
-check(firstHealth.Health == 100, "Moving out of captured warning avoids the slam")
-firstRoot.Position = Vector3.new(-45, 7, -11)
-h:tick(4.203)
-h:tick(5.104)
-check(firstHealth.Health == 88 and secondHealth.Health == 100, "Standing still takes configured damage; inactive observer stays safe")
-check(h.service.attack(first), "Idle reset test starts from damaged enemy health")
+first, firstRoot = h:makePlayer("Leash", Vector3.new(-45, 7, -3))
+for index = 1, 12 do h:tick(index * 0.1) end
+check(h.service.attack(first), "Leash scenario damages an actively chasing foe")
+local damagedHealth, lastNearby = h.models.moss:GetAttribute("Health"), h.now
 firstRoot.Position = Vector3.new(0, 7, 40)
-local before = h.models.moss:GetAttribute("Health")
-h:tick(15.103)
-check(h.models.moss:GetAttribute("Health") == before, "Short disengagement preserves the encounter")
-h:tick(15.104)
-check(h.models.moss:GetAttribute("Health") == 140 and h.models.moss:GetAttribute("Status") == "Ready",
-	"Ten seconds without eligible nearby hunters resets health and pending warnings")
+h:tick(lastNearby + Rules.encounterResetDelay - 0.001)
+check(h.models.moss:GetAttribute("Health") == damagedHealth, "Brief retreat does not erase encounter damage")
+h:tick(lastNearby + Rules.encounterResetDelay)
+firstRoot.Position = h.models.moss.PrimaryPart.Position + Vector3.new(0, 0, 4)
+check(h.models.moss:GetAttribute("State") == "Return" and h.service.attack(first) and h.models.moss:GetAttribute("Health") == damagedHealth,
+	"Lost hunter starts an unattackable walk home rather than an abrupt reset teleport")
+firstRoot.Position = Vector3.new(0, 7, 40)
+for index = 1, 150 do
+	h:tick(lastNearby + Rules.encounterResetDelay + index * 0.1)
+	check((h.models.moss.PrimaryPart.Position - h.models.moss:GetAttribute("HomePosition")).Magnitude <= Rules.leashRadius,
+		"Return remains within the home's hard movement leash")
+end
+check(h.models.moss:GetAttribute("Health") == 140 and h.models.moss:GetAttribute("State") == "Patrol",
+	"Home arrival restores baseline health and idle patrol")
 h.service.destroy()
 
+-- Bosses mix basics and special patterns; special warnings capture a world disk.
 h = harness()
 first, firstRoot, firstHealth = h:makePlayer("Boss", Vector3.new(65, 8, -66))
 h:tick(0.1)
-h:tick(0.901)
+local initialEngage = h.now
+h:tick(initialEngage + Rules.firstSlamDelay - 0.001)
+check(h.folder:FindFirstChild("SlamWarning") == nil, "Boss special gives the configured initial delay")
+h:tick(initialEngage + Rules.firstSlamDelay)
 local warning = h.folder:FindFirstChild("SlamWarning")
-check(warning and warning.Size.Y == 14 and warning.CFrame.Position.Z == -66, "Boss first pattern captures player disk radius seven")
-firstRoot.Position = Vector3.new(65, 8, -52)
-h:tick(2.102)
-check(firstHealth.Health == 100, "Boss targeted disk can be evaded")
-h:tick(4.503)
+check(warning and h.models.ruins:GetAttribute("State") == "SkillWindup" and warning.Size.Y == 14 and warning.CFrame.Position.Z == -66,
+	"Boss targeted warning captures the player position and readable animation state")
+local bossImpact = h.now + Rules.foes[3].windup
+first.Character:SetAttribute("DodgeUntil", bossImpact + 0.01)
+h:tick(bossImpact)
+check(firstHealth.Health == 100, "Dodge invulnerability also gates boss area damage")
+firstRoot.Position = h.models.ruins.PrimaryPart.Position + Vector3.new(0, 0, 6)
+h:tick(bossImpact + Rules.slamCooldown)
 warning = h.folder:FindFirstChild("SlamWarning")
-check(warning and warning.Size.Y == 20 and (warning.CFrame.Position - Vector3.new(65, 4.1, -72)).Magnitude < 0.001,
-	"Boss second pattern anchors radius-ten disk at the boss")
-check(warning:FindFirstChildOfClass("BillboardGui"):FindFirstChildOfClass("TextLabel").Text == "RETREAT!", "Boss center burst has distinct readable instruction")
-firstRoot.Position = Vector3.new(65, 8, -63)
-h:tick(5.704)
-check(firstHealth.Health == 78, "Boss burst uses its actual ten-stud geometry for damage")
-h:tick(8.105)
-warning = h.folder:FindFirstChild("SlamWarning")
-check(warning and warning.Size.Y == 14 and warning.CFrame.Position.Z == -63, "Boss third warning returns to the captured-player pattern")
+check(warning and warning.Size.Y == 20 and math.abs(warning.CFrame.Position.Z - h.models.ruins.PrimaryPart.Position.Z) < 0.001,
+	"Boss second special anchors the wider disk at its current moving root")
+check(warning:FindFirstChildOfClass("BillboardGui"):FindFirstChildOfClass("TextLabel").Text == "RETREAT!",
+	"Boss centered burst has a different instruction")
+h:tick(h.now + Rules.foes[3].windup)
+check(firstHealth.Health == 100 - Rules.foes[3].slamDamage, "Expired dodge immunity permits actual boss burst damage")
+h.service.destroy()
+
+-- Killing a boss during its skill warning destroys both pending AoE and animation.
+h = harness()
+first, _, firstHealth = h:makePlayer("InterruptBoss", Vector3.new(65, 8, -66))
+h:tick(0.1)
+h:tick(0.1 + Rules.firstSlamDelay)
+check(h.folder:FindFirstChild("SlamWarning"), "Interrupt case begins during a pending boss warning")
+h:finish(first, "ruins")
+check(h.folder:FindFirstChild("SlamWarning") == nil, "Boss defeat immediately destroys its pending warning")
+h:tick(h.now + 0.1)
+check(firstHealth.Health == 100, "Canceled boss warning cannot deal post-mortem damage")
 h.service.destroy()
 check(h.workspace:FindFirstChild("WildbondGuardians") == nil and h.heartbeat:Count() == 0 and h.removing:Count() == 0,
 	"Destroy removes guardian/warning Instances and disconnects service signals")
 check(h.obstacle.Parent == h.workspace and first.Character.Parent == h.workspace, "Cleanup preserves unrelated world and player Instances")
 check(not h.service.attack(first) and not h.service.bond(first), "Destroyed service rejects all combat actions")
 h.service.destroy()
-print("CombatService: " .. checks .. " construction, authority, scheduling, balance, and lifecycle checks passed; Studio physics/networking remain untested")
+print("CombatService: " .. checks .. " construction, authority, locomotion, scheduling, balance, and lifecycle checks passed; Studio physics/networking remain untested")

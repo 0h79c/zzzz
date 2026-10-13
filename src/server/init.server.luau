@@ -8,6 +8,7 @@ local CombatRules = require(shared:WaitForChild("CombatRules"))
 local HuntMetrics = require(shared:WaitForChild("HuntMetrics"))
 local WorldBuilder = require(script:WaitForChild("WorldBuilder"))
 local CombatService = require(script:WaitForChild("CombatService"))
+local DodgeService = require(script:WaitForChild("DodgeService"))
 local world = WorldBuilder.build()
 
 local remotes = Instance.new("Folder")
@@ -28,7 +29,7 @@ local sessions = {}
 local measurements = {}
 local lastCommand = {}
 local lastPrompt = {}
-local actionIntervals = { sync = 1, attack = 0.1, bond = 0.1, unlock = 0.25, equip = 0.25 }
+local actionIntervals = { sync = 1, attack = 0.1, bond = 0.1, dodge = 0.1, unlock = 0.25, equip = 0.25 }
 
 local function send(player, message, success)
 	local state = sessions[player]
@@ -52,6 +53,7 @@ end, function(player, id)
 end, function(player, targetPosition)
 	effect:FireClient(player, "bond", targetPosition)
 end)
+local dodging = DodgeService.start()
 
 local function addPlayer(player)
 	if sessions[player] then
@@ -131,7 +133,7 @@ for id, prompt in world.prompts do
 	end)
 end
 
-command.OnServerEvent:Connect(function(player, action, petId)
+command.OnServerEvent:Connect(function(player, action, payload)
 	if typeof(action) ~= "string" or #action > 20 then
 		return
 	end
@@ -154,7 +156,10 @@ command.OnServerEvent:Connect(function(player, action, petId)
 	if action == "sync" then
 		send(player)
 	elseif action == "attack" then
-		local success, message = combat.attack(player)
+		local success, message, targetPosition = combat.attack(player)
+		if success and typeof(targetPosition) == "Vector3" then
+			effect:FireClient(player, "melee", targetPosition)
+		end
 		-- Quiet successful swings; keep mission text visible during combat.
 		if not success and message ~= "Your next swing is not ready yet." then
 			send(player, message, false)
@@ -162,7 +167,12 @@ command.OnServerEvent:Connect(function(player, action, petId)
 	elseif action == "bond" then
 		local success, message = combat.bond(player)
 		if not success then send(player, message, false) end
+	elseif action == "dodge" then
+		local success, message, direction = dodging.dodge(player, payload)
+		if success then effect:FireClient(player, "dodge", direction)
+		else send(player, message, false) end
 	elseif action == "unlock" or action == "equip" then
+		local petId = payload
 		if typeof(petId) ~= "string" or #petId > 32 then
 			return
 		end
@@ -173,6 +183,7 @@ end)
 
 game:BindToClose(function()
 	combat.destroy()
+	dodging.destroy()
 end)
 
-print("Wildbond alpha ready: measured hunts, server pet strikes and guardians; purchases disabled.")
+print("Wildbond alpha ready: roaming foes, animated attacks and server dodges; purchases disabled.")

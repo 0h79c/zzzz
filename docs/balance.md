@@ -1,63 +1,90 @@
-# Nhịp chuyến săn Wildbond
+# Cân bằng combat và nhịp nhiệm vụ Wildbond
 
-Bản đảo đầu chỉ có hai hộ vệ và một mini-boss. Mục tiêu cho lần đầu là **90–180 giây**, còn khi thuộc đường là **60–120 giây**. Đây là mục tiêu thiết kế để thử trong Studio, chưa phải thời gian đo từ người chơi. Một nhiệm vụ hai đến bốn phút sẽ cần thêm lựa chọn và trận đánh có ích; không tăng máu hoặc bắt chờ chỉ để đạt con số đó.
+Bản này đổi từ quái đứng yên báo vòng sang quái tuần tra, đuổi người chơi, đánh thường có lấy đà và hồi động tác. Boss giữ hai kỹ năng diện rộng bên cạnh đòn thường. Vì vị trí, góc đánh và thời gian tiếp cận đã thay đổi, bảng mô hình cũ cho chuyến săn khoảng 60–80 giây, boss 35,5 giây và máu còn lại 56/6 **không còn áp dụng**. Chưa có thời lượng hay tỷ lệ sống đo bằng Roblox Studio.
 
-## Vì sao phải chỉnh bản đầu
+Chuyến săn ba mục tiêu hiện là bài thử nền combat. Mục tiêu thử **90–180 giây lượt đầu, 60–120 giây khi thuộc đường** vẫn là một giả thuyết cho chuyến săn này; không phải thời lượng map RPG đầu hay cam kết mỗi nhiệm vụ đều dài như vậy. Khi có nhiều quái, class, rơi đồ và đường khám phá, cần đo lại nhịp tiến triển thay vì tăng máu hoặc bắt người chơi chờ để đủ số phút.
 
-Trước đợt này, đòn đánh gây 15 sát thương mỗi 0,45 giây. Nếu đánh đúng nhịp từ giây 0, hai hộ vệ 45/60 máu chết trong 0,9/1,35 giây và boss 120 máu chết trong 3,15 giây. Quái có thể chỉ kịp báo một đòn trước khi trận kết thúc; gần như không có thời gian học cách né. Thêm pet vào những chỉ số đó sẽ làm trận còn ngắn hơn.
-
-Đường vòng chính trong `WorldBuilder` dài khoảng 364 studs. Project dùng tốc độ 20 studs/giây, đi hết mất khoảng 18,2 giây khi không bị cản. Đó chỉ là chiều dài đường dựng sẵn, không phải quãng đường thực tế: người chơi có thể đi tắt hoặc cần tìm đường, né đòn, tới trụ tinh thể và rương nhận thưởng. Không thể suy thời lượng buổi chơi từ kích thước map hoặc máu boss.
-
-## Quy tắc cho đợt này
-
-- Người chơi có đòn thường ở cự ly ngắn và một lệnh cho pet đánh theo cooldown. Pet khởi đầu đủ sức hoàn thành chuyến săn; ba kiểu pet đang dùng cùng chỉ số đánh để việc chọn ngoại hình không gây bất lợi. Vai trò hỗ trợ riêng sẽ được thử ở một đợt sau.
-- Quái đầu dạy rời vòng báo đòn. Quái thứ hai đòi hỏi tiếp cận, đánh và rút ra theo nhịp. Boss đổi giữa hai dấu báo; người chơi phải chọn vị trí an toàn thay vì đứng yên bấm liên tục.
-- Máu tăng theo người thực sự gây sát thương, tối đa bốn người được tính cho độ khó. Khách đứng xem không tăng máu. Tham gia giữa trận tăng phần máu dành cho thành viên mới; rời trận không làm lượng máu đã phân bổ giảm tức thì. Khi mọi người bỏ trận đủ lâu, quái trở về trạng thái ban đầu.
-- Đóng góp bằng đòn pet cũng có giá trị như đòn thường. Không cần giành đòn kết liễu. Phải còn sống, có hunt tương ứng và ở gần trận khi quái bị hạ để nhận mục tiêu.
-- Chết giữ các tinh thể và mục tiêu đã hoàn thành trong phiên. Quái chưa hạ vẫn là một trận phải chơi lại. Chưa có dữ liệu qua nhiều phiên; chưa bật giao dịch Robux.
-
-Chỉ số đang thử:
+## Chỉ số và hành vi hiện tại
 
 | Thành phần | Chỉ số |
 | --- | --- |
-| Người chơi | 100 máu; đòn thường 10 sát thương, hồi 0,6 giây, phạm vi 8 studs |
-| Pet | 18 sát thương, hồi 3,2 giây, phạm vi 18 studs; đòn tới sau 0,3 giây |
-| Bramble Sprout | 140 máu, sát thương 12, báo 0,9 giây, vòng mục tiêu 5 studs |
-| Reed Guardian | 200 máu, sát thương 16, báo 1 giây, vòng mục tiêu 5 studs |
-| Hollow Crown | 600 máu, sát thương 22, báo 1,2 giây; đổi giữa vòng mục tiêu 7 và vòng quanh boss 10 studs |
-| Nhịp đòn quái | Bắt đầu báo sau 0,8 giây khi vào trận; nghỉ 2,4 giây sau khi đòn giải quyết |
-| Đồng đội | Máu nền × [1 + 0,65 × (số người góp sát thương − 1)], tính tối đa bốn người |
+| Người chơi | 100 máu; đi 20 studs/giây |
+| Đánh thường | Click; 10 sát thương, hồi 0,6 giây, cự ly 8 studs |
+| Lệnh thú | 18 sát thương, hồi 3,2 giây, cự ly 18 studs; đòn tới sau 0,3 giây |
+| Né | Nhấn Space hai lần trong 0,28 giây; tối đa 8 studs trong 0,22 giây; miễn sát thương tối đa 0,18 giây; hồi 4 giây |
+| Đòn thường của quái | Lấy đà 0,65 giây, khóa hướng, kiểm tra cung đánh phía trước và cự ly 5 studs; hồi động tác 0,28 giây |
+| Bramble Sprout | 140 máu; đánh thường 8 sát thương, hồi 1,2 giây từ lúc lấy đà; hiện không dùng kỹ năng AoE |
+| Reed Guardian | 200 máu; đánh thường 10 sát thương, hồi 1,2 giây từ lúc lấy đà; hiện không dùng kỹ năng AoE |
+| Hollow Crown | 600 máu; đánh thường 12 sát thương, hồi 1,5 giây từ lúc lấy đà |
+| Kỹ năng boss | 22 sát thương, lấy đà 1,2 giây; đổi giữa vòng tại mục tiêu bán kính 7 và vòng quanh boss bán kính 10 studs |
+| Di chuyển của quái | Tuần tra trong phạm vi nhà 12 studs ở tốc độ 3,5; đuổi ở tốc độ 7; giới hạn kéo ra khỏi nhà 28 studs |
+| Chơi nhóm | Máu nền × [1 + 0,65 × (số người góp sát thương − 1)], tối đa bốn người tính độ khó |
 
-Không hồi máu tự động để tránh đứng ngoài vòng đòn rồi đánh mãi không có rủi ro. Nhận hunt và nhận thưởng hồi đầy máu; giữa ba trận phải quản lý lượng máu còn lại. Khi không còn người đủ điều kiện ở gần và có đường nhìn trong 10 giây, trận bỏ dở reset. Thời gian hồi quái sau khi bị hạ là 6 giây; không cộng thời gian đó vào mục tiêu thời lượng vì người chơi bình thường không cần chờ để đi tiếp.
+Boss chỉ bắt đầu một kỹ năng khi không còn đòn thường hoặc động tác hồi đang chạy. Lần đầu sẵn sàng sau 2,8 giây từ khi vào trận; các lần sau sẵn sàng 5 giây sau khi kỹ năng giải quyết. Kỹ năng có thể chờ một động tác đang dở; không cộng hai loại sát thương như thể cả hai đánh cùng lúc.
 
-## Thưởng và sưu tầm
+Quái khóa hướng đòn thường khi lấy đà, không quay theo người chơi tới tận thời điểm trúng. Người chơi có thể lùi khỏi tầm hoặc đi vòng khỏi hướng đánh. Phạm vi và đường nhìn được kiểm tra lại khi đòn tới; miễn sát thương khi né do server kiểm tra. Di chuyển có kiểm tra vật cản và mặt đất, chưa phải hệ tìm đường cho mọi địa hình. Né có thể bị rút ngắn hoặc từ chối nếu đường không an toàn, nên 8 studs là giới hạn chứ không bảo đảm mỗi lần đều đi đủ.
 
-Giữ 60 shells mỗi chuyến, cáo 120 và gấu con 240. Người chơi lấy cáo sau hai chuyến; nếu đã mua cáo rồi, tổng cộng sáu chuyến để có cả cáo lẫn gấu. Các giá này là mục tiêu nhỏ cho alpha, chưa phải nền kinh tế phát hành. Chưa có lý do tăng giá để buộc lặp lại nhiều hơn khi map chỉ có ba trận.
+Không hồi máu thụ động trong trận. Nhận hunt, nhận thưởng và hồi sinh hồi đầy máu. Các mục tiêu đã hoàn thành vẫn giữ nếu chết trong phiên. Máu quái tăng khi một người mới thực sự góp sát thương; người đứng xem không tăng độ khó. Rời trận không làm phần máu đã phân bổ tự giảm. Sau 10 giây không còn người đủ điều kiện gần đó và có đường nhìn, quái quay về nhà và reset; quái bị hạ hồi sau 6 giây. Trước khi nhận hunt, hoặc sau khi đã hoàn thành mục tiêu tương ứng, người chơi chưa bị các quái đó chọn làm mục tiêu.
 
-Sau khi có thêm nội dung, cách kéo dài buổi chơi là thêm đường săn khác, cơ chế boss, thành tích tự chọn và thú có cách chơi riêng. Phần thưởng mỹ phẩm có thể đi cùng các mục tiêu đó. Không dùng pet mua Robux để bù một trận cố tình quá khó cho thú miễn phí.
+## Khoảng thoát và độ khó
 
-## Kiểm tra bằng số và bằng chơi
+Ở mặt đất trống, lấy trường hợp người chơi đứng sát tâm quái: để đi ra ngoài cự ly 5 studs ở tốc độ 20 cần hơn 0,25 giây. Windup 0,65 giây để lại dưới 0,40 giây cho nhận biết và bắt đầu di chuyển, chưa trừ độ trễ hoặc vật cản. Đây là lý do tăng windup từ 0,45 lên 0,65 giây; hoạt ảnh lấy đà phải cho người chơi nhìn thấy đúng khoảng thời gian đó. Đi ngang khỏi cung đánh có thể thoát nhanh hơn, nhưng phải thử camera và animation trong Studio.
 
-Chạy `.tools/lune run scripts/balance_report.luau` trong thư mục project để xem mô hình chiến đấu từ `CombatRules` và giá từ `Expedition`. Báo cáo đọc cả mẫu đòn, cách tăng máu, chiều dài đường, thời gian giữ prompt và tốc độ từ cấu hình Rojo; không có một bộ chỉ số quái thứ hai trong script. Kịch bản có nhịp đánh, đòn pet và các lần phải dừng đánh để di chuyển; kịch bản chậm còn có đánh trượt và né hụt. Chúng là giả định để tìm sai lệch lớn, không mô phỏng vật lý, raycast, độ trễ, camera hoặc tâm lý người chơi.
+Nhịp đòn thường 1,2–1,5 giây nhanh hơn hồi né 4 giây. Vì vậy người chơi cần vừa đánh vừa đi, không thể nhấn né cho mọi đòn. Hai lần Space cần được nhận trong 0,28 giây; độ trễ input và mạng xảy ra trước lúc server chấp nhận né. Miễn sát thương chỉ dài tối đa 0,18 giây đầu, ngắn hơn động tác 0,22 giây; nếu bị vật cản dừng sớm, miễn sát thương cũng kết thúc sớm. Không mô tả né là bất tử trong toàn bộ động tác, và không yêu cầu né là cách duy nhất thoát kỹ năng boss.
 
-Kết quả mô hình ở chỉ số trên, cùng một thanh máu đi qua cả ba trận, không hồi giữa trận:
+Vòng tại mục tiêu bán kính 7 cần hơn 0,35 giây đi bộ từ tâm tới ngoài vòng; windup 1,2 để lại dưới 0,85 giây phản ứng trên mặt đất trống. Vòng quanh boss bán kính 10, nếu bắt đầu ở mép cự ly đánh của người chơi 8, chỉ cần đi thêm hơn 2 studs, tức hơn 0,10 giây; khoảng phản ứng còn dưới 1,10 giây. Nếu đã đứng sát boss, phải đi xa hơn. Các phép tính không bao gồm kích thước cơ thể, đường vòng, camera, tick server hoặc vật cản.
 
-| Kịch bản giả định | Tổng ba trận | Cộng đường vòng và giữ prompt | Máu còn lại |
-| --- | --- | --- | --- |
-| Chỉ tính sát thương liên tục, bỏ qua đòn quái | 40,3 giây | 60,3 giây | Không đánh giá |
-| Né mọi đòn; dừng đánh thường khi di chuyển | 52,3 giây | 72,2 giây | 100 |
-| Trượt mỗi đòn thường thứ tư, gọi pet chậm, hụt mỗi lần né thứ tư | 60,2 giây | 80,1 giây | 56 |
-| Như trên nhưng hụt mỗi lần né thứ ba | 59,7 giây | 79,6 giây | 6 |
-| Đứng trong mọi dấu báo | Chết ở đòn thứ hai của boss | Không hoàn thành | 0 |
+Rủi ro ngược lại là combat quá dễ khi giữ khoảng cách: người chơi đi 20, quái đuổi 7, còn đòn người chơi với tới 8 so với tầm quái 5. Giữ đúng khoảng cách trên đường trống có thể né phần lớn đòn thường và vẫn đánh được. Giai đoạn đầu ưu tiên việc học động tác; sau khi thử thực tế mới cân nhắc tốc độ từng loài, khoảng cách tiếp cận hay một đòn lao có báo trước. Không tăng máu để che việc AI không tạo áp lực.
 
-Cột cộng đường vẫn chưa tính đọc hướng dẫn, tìm trụ, đường đi tắt, cooldown còn lại từ trận trước, độ trễ hoặc hồi sinh. Mô hình cho mỗi trận bắt đầu với đòn sẵn sàng và pet vẫn đủ phạm vi/đường nhìn khi người chơi né. Hai kịch bản chậm dùng phản ứng 0,45 giây, thêm 0,35 giây để quay lại đánh và gọi pet chậm hơn cooldown 1,3 giây. Đây là đầu vào thử độ nhạy, không phải mô tả chắc chắn về nhóm tuổi 12–16.
+Với thanh 100 máu đầy, riêng đòn thường cần 13 lần trúng từ Sprout, 10 từ Guardian hoặc 9 từ boss để hạ người chơi. Đây là ngân sách lỗi theo từng loại đòn, không phải số lần một người sẽ bị trúng. Máu mang từ trận trước và kỹ năng boss làm ngân sách thực thấp hơn. Chưa dự đoán tỷ lệ chết cho người mới khi chưa có dữ liệu về di chuyển và camera.
 
-Trong mô hình né đủ, boss mất khoảng 35,5 giây và báo 10 đòn. Sát thương liên tục khi bỏ qua đòn quái cho boss 25,9 giây với pet và 35,4 giây chỉ đánh thường. Điều này tạo lý do gọi pet, nhưng không chứng minh cảm giác chơi đã hay. Kịch bản hụt mỗi lần né thứ ba còn 6 máu: chỉ thêm một lỗi là có thể chết, nên cần thử thực tế trước khi tăng độ khó.
+## Thời gian hạ quái lý thuyết
 
-Khi hai, ba hoặc bốn người cùng góp sát thương từ đầu, boss lần lượt có 990/1.380/1.770 máu. Nếu bỏ qua đòn quái và mọi người đánh đúng cooldown, thời gian tối thiểu theo mô hình là 21,6/19,8/19,5 giây, so với 25,9 giây khi solo. Đây chỉ kiểm tra việc đồng đội có lợi mà không chia thời gian boss thẳng cho bốn; phối hợp, nhận sát thương và tham gia giữa trận cần kiểm tra bằng nhiều client.
+Chạy `.tools/lune run scripts/balance_report.luau` từ thư mục project. Báo cáo đọc `CombatRules`, `DodgeRules`, `Expedition`, tốc độ từ project và hình học đường nếu còn biểu diễn bằng bảng tọa độ. Không có bộ chỉ số quái thứ hai trong script.
 
-Trong Studio, ghi riêng bốn thời gian: nhận hunt tới trận đầu, hai hộ vệ, boss, và nhặt đủ tinh thể tới nhận thưởng. Thử một mình trước, sau đó hai và bốn client; mỗi client phải thực sự đánh trước khi được tính tăng độ khó. Ghi cả lần thất bại, số đòn bị trúng, số lần chết và đoạn đứng chờ. Không chỉ lấy lần nhanh nhất. Đồng hồ hunt trong HUD giúp lấy thời gian cả chuyến và số lần ngã; không có thưởng thêm theo thời gian, tránh biến bài thử này thành sức ép phải chơi nhanh.
+Bảng dưới cho **thời gian ngắn nhất theo sát thương hiện có**: bắt đầu với cooldown sẵn sàng, click đúng nhịp từ giây 0, tất cả đòn trúng, luôn đủ cự ly và đường nhìn; lệnh pet cũng dùng đúng nhịp và tới sau 0,3 giây. Bỏ qua di chuyển, sát thương nhận vào, đọc tình huống, đánh trượt và độ trễ. Pet chưa tự đánh thường; không thêm sát thương giả định từ tính năng tương lai.
 
-Nếu người mới chết hai lần liền ở boss sau khi đã hiểu dấu báo, trước tiên xem độ rõ của dấu báo và khoảng thoát, rồi mới giảm sát thương. Nếu người thuộc đường luôn bỏ qua toàn bộ đòn boss, xem cơ chế và nhịp pet trước khi tăng máu. Nếu chuyến săn vượt ba phút vì đi lạc hoặc chờ quái hồi, sửa chỉ dẫn hoặc vòng chơi; không coi đó là nội dung.
+| Quái | Chỉ đánh thường | Đánh thường + lệnh pet |
+| --- | --- | --- |
+| Bramble Sprout, 140 máu | 7,8 giây | 6,0 giây |
+| Reed Guardian, 200 máu | 11,4 giây | 8,4 giây |
+| Hollow Crown, 600 máu | 35,4 giây | 25,9 giây |
 
-Chưa có dữ liệu giữ chân hoặc chi tiêu để suy ra khả năng kiếm Robux. Cần thử vòng chơi và lưu tiến độ đáng tin cậy trước khi đánh giá cửa hàng.
+Tốc độ sát thương danh nghĩa dài hạn là 16,67/giây từ đòn thường và 5,625/giây từ lệnh pet, tổng khoảng 22,29/giây. Bảng dùng từng lần trúng theo cooldown và windup, không chia máu thẳng cho DPS để đo thời gian trận ngắn. Trận thật sẽ chịu ảnh hưởng của việc dừng đánh, mất cự ly, quái di chuyển và người chơi ngã; bảng không chứng minh boss mất khoảng 26 giây trong Studio.
+
+Nếu mọi người cùng góp sát thương từ đầu, boss có:
+
+| Người góp sát thương | Máu boss | Cận dưới thời gian với pet tương đương |
+| --- | --- | --- |
+| 1 | 600 | 25,9 giây |
+| 2 | 990 | 21,6 giây |
+| 3 | 1.380 | 19,8 giây |
+| 4 | 1.770 | 19,5 giây |
+
+Đây là người đánh thực sự, không phải số người trong server. Mô hình giả định đòn của nhóm đồng thời và luôn trúng; tham gia giữa trận hoặc phối hợp kém cần thử bằng nhiều client. Boss AoE có thể trúng nhiều người, trong khi đòn thường nhắm một mục tiêu, nên không suy khả năng sống của nhóm từ bảng máu.
+
+Script in thêm áp lực đòn thường nếu luôn đứng trong cự ly và nhận mọi đòn: tối đa danh nghĩa 6,67/8,33/8 máu mỗi giây. Đây là kiểm tra riêng bỏ qua kỹ năng, chase, né và tick server. Không cộng nó với một DPS kỹ năng rồi coi là dự báo sát thương thực.
+
+Chiều dài đường dựng sẵn chỉ là bối cảnh hình học. Không cộng đường đó với bảng hạ quái để khẳng định thời lượng hunt: người chơi có thể đi tắt, tìm quái đang tuần tra, nhặt tinh thể, lùi khỏi trận, bị hạ hoặc tìm đường lần đầu. Mô hình đi đứng và nhận sát thương của quái đứng yên ở bản trước đã được gỡ khỏi báo cáo.
+
+## Thưởng, class, trang bị và thú ở các đợt sau
+
+Thưởng hiện giữ 60 shells/chuyến; cáo 120, gấu con 240. Mở riêng cáo cần hai chuyến; mua cáo rồi gấu cần tổng sáu chuyến. Cả ba thú có cùng lệnh đánh hiện tại, chưa có tiến hóa, nội tại, tự đánh hoặc vai trò riêng. Đây là vòng sưu tầm của alpha; chưa tăng giá để kéo dài grind trước khi có nội dung.
+
+Hướng RPG mới cần tách tiến triển thành mục tiêu nhỏ: học một động tác, kiếm một món cơ bản, thử một vùng quái mới và mở nhánh nghề. Sau khi có map và mật độ quái thật mới đo thời gian đạt level/class và đồ cần thiết. Trang bị khởi đầu ở NPC phải đủ để đánh quái cùng cấp; rơi đồ hiếm là phần thưởng thêm, không là điều kiện vượt vùng đầu. Xác suất thấp cần đánh giá bằng số lượt trung bình `1/p` cùng thời gian mỗi lượt đã đo, không chỉ ghi một tỷ lệ nghe hấp dẫn.
+
+Thanh phím 1–8 là chỗ gán kỹ năng về sau; không mặc định người mới phải học và dùng đủ tám kỹ năng ngay lập tức. Tốn mana, nộ, thể lực và nhánh nghề sẽ có ngân sách riêng theo class. Ở giai đoạn này chưa có hệ tài nguyên, nên báo cáo không giả lập chi phí hay khả năng duy trì kỹ năng.
+
+Khi có nhiều ô trang bị, cần giới hạn tổng sát thương, giảm hồi chiêu và chống chịu theo cấp; cộng từng món riêng có thể làm boss mất toàn bộ cơ chế. Vũ khí hai tay phải khóa ô phụ; ba nhẫn không được trở thành ba bản sao cộng dồn cùng một nội tại mạnh. Các nguyên tắc này là yêu cầu thiết kế cho đợt trang bị, chưa phải tính năng đang chạy.
+
+Khi pet có tự đánh, tiến hóa và nội tại buff, phải đưa cả ba vào tổng sát thương của người chơi trước khi chỉnh máu quái. Tiến hóa nên mở một vai trò hoặc quyết định chiến thuật, như chặn một đòn, kéo aggro có giới hạn hoặc hỗ trợ hồi phục; không để mọi pet cùng cộng sát thương, choáng và hút aggro liên tục. Các vai trò miễn phí phải chơi được các vùng chính. Không dùng pet Robux để bù một trận cố tình quá khó cho thú miễn phí.
+
+## Kiểm tra tiếp trong Studio
+
+Thử một người trước, rồi hai và bốn client thực sự đánh. Ghi riêng thời gian nhận hunt tới trận đầu, từng trận và đoạn nhặt tinh thể tới nhận thưởng; ghi cả lần thất bại, số đòn thường/kỹ năng bị trúng, lần né bị từ chối và đoạn đứng chờ. Đồng hồ hunt giúp lấy tổng thời gian và số lần ngã, chưa phân loại tự động sát thương theo từng đòn. Không chỉ lấy lần chơi nhanh nhất.
+
+Trong từng trận, thử đứng yên một lần để xem đòn thường có tới đúng animation; lùi sau dấu lấy đà; đi ngang; đánh từ mép 8 studs; dụ ra giới hạn nhà; né khi sát tường và khi lần Space đầu đang nhảy. Quái không được vừa đánh vừa đổi hướng để đuổi theo sau lưng, mắc vào cảnh vật mà vẫn gây sát thương, hoặc giữ damage khi đã quay về reset. Thử riêng né sớm và muộn vì 0,18 giây miễn sát thương không phủ toàn bộ 0,22 giây di chuyển.
+
+Nếu người mới hiểu dấu báo nhưng vẫn bị hạ liên tiếp, kiểm tra độ rõ của animation, đường thoát và độ trễ trước khi giảm sát thương. Nếu giữ khoảng cách khiến quái không đánh được lần nào, sửa hành vi và cự ly thay vì tăng máu. Nếu chuyến săn vượt ba phút do đi lạc hoặc chờ quái hồi, sửa chỉ dẫn và mật độ spawn; đó không phải nội dung để giữ chân.
+
+Chưa có dữ liệu giữ chân, chi tiêu hay chơi nhiều phiên để suy khả năng kiếm Robux. Combat, tiến độ lưu đáng tin cậy và nội dung đủ chơi phải được thử trước khi đánh giá cửa hàng.
