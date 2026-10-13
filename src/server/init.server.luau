@@ -156,9 +156,9 @@ command.OnServerEvent:Connect(function(player, action, payload)
 	if action == "sync" then
 		send(player)
 	elseif action == "attack" then
-		local success, message, targetPosition = combat.attack(player)
+		local success, message, targetPosition, hit = combat.attack(player)
 		if success and typeof(targetPosition) == "Vector3" then
-			effect:FireClient(player, "melee", targetPosition)
+			effect:FireClient(player, "melee", targetPosition, hit == true)
 		end
 		-- Quiet successful swings; keep mission text visible during combat.
 		if not success and message ~= "Your next swing is not ready yet." then

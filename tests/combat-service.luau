@@ -121,27 +121,31 @@ local h = harness()
 local first, firstRoot, firstHealth = h:makePlayer("First")
 local second, _, secondHealth = h:makePlayer("Second")
 local spectator = h:makePlayer("Spectator")
-check(#h.folder:GetChildren() == 3, "Service constructs three actual guardian Models")
+check(#h.folder:GetChildren() == #Rules.foes, "Service constructs every configured creature Model")
 for _, definition in Rules.foes do
 	local model = h.models[definition.id]
 	check(model:IsA("Model") and model:FindFirstChild("GuardianHealth"):IsA("BillboardGui"), "Guardian has real model and health display")
 	check(model:GetAttribute("Health") == definition.maxHealth and model:GetAttribute("MaxHealth") == definition.maxHealth,
 		"Idle enemy begins at unscaled full health")
+	check(model:GetAttribute("EnemyKind") == definition.kind and model:GetAttribute("BountyTarget") == definition.bounty,
+		"Species and bounty metadata match the authoritative catalog")
 	check((model.PrimaryPart.Position - Vector3.new(definition.position.x, definition.position.y, definition.position.z)).Magnitude < 0.001,
 		"Rendered root and authoritative spawn agree")
 end
 local moss = h.models.moss
 h.states[first].active = false
-check(h.service.attack(first) and moss:GetAttribute("Health") == 140, "Inactive hunter can practice a swing but cannot damage an enemy")
+local practice, _, _, practiceHit = h.service.attack(first)
+check(practice and practiceHit == false and moss:GetAttribute("Health") == 140, "Inactive practice swing emits no impact or enemy damage")
 h.states[first].active, firstHealth.Health = true, 0
 check(not h.service.attack(first), "Dead character cannot attack")
 firstHealth.Health, firstRoot.Position, h.now = 100, Vector3.new(-45, 7, -3), 0.61
-check(h.service.attack(first) and moss:GetAttribute("Health") == 140, "Cosmetic whiff outside melee range cannot damage a guardian")
+local whiff, _, _, whiffHit = h.service.attack(first)
+check(whiff and whiffHit == false and moss:GetAttribute("Health") == 140, "Cosmetic whiff outside melee range emits no impact or enemy damage")
 h.now, firstRoot.Position, h.blocked = 1.22, Vector3.new(-45, 7, -11), true
 check(h.service.attack(first) and moss:GetAttribute("Health") == 140, "Ray obstruction prevents melee damage while allowing swing animation")
 h.blocked, h.now = false, 1.83
-local hit, _, hitPosition = h.service.attack(first)
-check(hit and moss:GetAttribute("Health") == 130 and hitPosition == moss.PrimaryPart.Position,
+local hit, _, hitPosition, didHit = h.service.attack(first)
+check(hit and didHit == true and moss:GetAttribute("Health") == 130 and hitPosition == moss.PrimaryPart.Position,
 	"Accepted melee applies ten damage and returns an authoritative FX location")
 check(moss:GetAttribute("MaxHealth") == 140, "Nearby active hunters do not inflate enemy health before contributing")
 check(not h.service.attack(first) and moss:GetAttribute("Health") == 130, "Repeated attack in one frame is throttled")
@@ -161,6 +165,49 @@ check(moss:GetAttribute("Health") == 0, "Enemy stays defeated before respawn dea
 h:tick(diedAt + Rules.respawnDelay)
 check(moss:GetAttribute("Health") == 140 and moss:GetAttribute("MaxHealth") == 140 and moss.PrimaryPart.Transparency == 0,
 	"Respawn restores solo baseline, geometry, and encounter lifetime")
+h.service.destroy()
+
+-- Ambient fauna has real species geometry and can be fought repeatedly without bounty credit.
+h = harness()
+local boar = h.models.brush02
+local legs, feet, boarParts = 0, 0, 0
+for _, object in boar:GetChildren() do
+	if object.Name == "RootLeg" then legs += 1 elseif object.Name == "RootFoot" then feet += 1 end
+	if object:IsA("BasePart") then boarParts += 1 end
+end
+check(legs == 4 and feet == 4 and boarParts <= 40 and boar:FindFirstChild("Snout") and boar:FindFirstChild("Tusk")
+	and not boar:FindFirstChild("BranchArm"), "Brush boar has an original quadruped silhouette rather than guardian recolor")
+check(boar:FindFirstChild("Head").CFrame.Position.Y < h.models.moss:FindFirstChild("Head").CFrame.Position.Y,
+	"Boar head is low and forward while the sprout guardian stands upright")
+check(h.models.river.PrimaryPart.Size.X < h.models.moss.PrimaryPart.Size.X
+	and h.models.river:FindFirstChild("LeafCrown").Size.Y > h.models.moss:FindFirstChild("LeafCrown").Size.Y,
+	"Reed guardian has a narrow torso and tall reed crown distinct from sprout foliage")
+first = h:makePlayer("FaunaHunter", boar.PrimaryPart.Position + Vector3.new(0, 0, 4))
+for life = 1, 2 do
+	h:finish(first, "brush02")
+	check(#h.credits == 0 and h.states[first].defeated.brush02 == nil,
+		"Ambient defeat cannot call the expedition reward callback or mark a bounty")
+	h:tick(h.now + Rules.respawnDelay)
+	check(boar:GetAttribute("Health") == 75 and boar.PrimaryPart.Transparency == 0,
+		"Ambient creature respawns with its original lower health")
+end
+h:tick(h.now + 0.1)
+check(boar:GetAttribute("State") == "MeleeWindup", "Respawned boar uses the shared active-melee AI")
+h.service.destroy()
+
+-- Exploring players can fight fauna immediately; bounty progress remains opt-in.
+h = harness()
+boar = h.models.brush02
+first = h:makePlayer("Explorer", boar.PrimaryPart.Position + Vector3.new(0, 0, 4), false)
+h:tick(0.1)
+check(boar:GetAttribute("State") == "MeleeWindup", "Ambient creature can acquire an explorer without an active bounty")
+check(h.service.attack(first) and boar:GetAttribute("Health") == 65, "Explorer click deals normal ambient damage before accepting a hunt")
+check(h.service.bond(first), "Owned companion can strike ambient fauna outside a bounty hunt")
+h:flush(0.1 + Rules.petWindup)
+check(boar:GetAttribute("Health") == 47, "Explorer companion damage commits after its real windup")
+h:finish(first, "brush02")
+check(not h.states[first].active and next(h.states[first].defeated) == nil and #h.credits == 0,
+	"Free ambient combat neither starts a bounty nor grants expedition progress or rewards")
 h.service.destroy()
 
 -- Encounter HP caps actual contributors; a departing hunter never lowers it.

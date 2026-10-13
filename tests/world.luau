@@ -34,7 +34,19 @@ end
 local game = Instance.new("DataModel")
 local workspace = game:GetService("Workspace")
 local lighting = game:GetService("Lighting")
-local environment = { game = game, workspace = workspace, Random = Random }
+-- Shared definitions are the real module; only Roblox's Instance require and
+-- asynchronous WaitForChild lookup are adapted for the headless loader.
+local rulesToken = {}
+local shared = { WaitForChild = function(_, name) assert(name == "CombatRules"); return rulesToken end }
+local replicated = { WaitForChild = function(_, name) assert(name == "Wildbond"); return shared end }
+local environment = {
+	game = { GetService = function(_, name)
+		return if name == "ReplicatedStorage" then replicated else game:GetService(name)
+	end },
+	workspace = workspace,
+	Random = Random,
+	require = function(token) assert(token == rulesToken); return Rules end,
+}
 for _, name in { "Instance", "Vector3", "CFrame", "Color3", "UDim2", "Enum" } do
 	environment[name] = roblox[name]
 end
@@ -91,7 +103,7 @@ local function validateWorld(result)
 			if object.Name == "Trail" then
 				table.insert(trails, object)
 			end
-			if object.Name == "Trail" or object.Name == "CarriageApproach" then
+			if object.Name == "Trail" or object.Name == "CarriageApproach" or object.Name == "SideTrail" then
 				table.insert(walkingRoutes, object)
 			end
 			if object.CanCollide then
@@ -110,7 +122,7 @@ local function validateWorld(result)
 	local landscape = island:FindFirstChild("WoodlandLandscape")
 	check(landscape ~= nil and landscape:IsA("BasePart") and landscape.CanCollide and landscape.Size.X > 1000 and landscape.Size.Z > 1000, "Mainland must continue beneath the surrounding ridges")
 	check(#trails == 9, "Village and expedition routes must all be present")
-	check(#walkingRoutes == 11, "Carriage stop needs two supported approach sections")
+	check(#walkingRoutes == 13, "Carriage stop and roaming clearings need supported branch routes")
 	check(#allPrompts == 5, "Exactly five map interactions are required")
 	local expected = { start = true, ["return"] = true, moss = true, river = true, ruins = true }
 	local count = 0
@@ -193,25 +205,35 @@ local function validateWorld(result)
 		check(island:FindFirstChild(name) ~= nil, "Woodland region landmark is missing: " .. name)
 	end
 
+	local bountyCount = 0
 	for _, foe in Rules.foes do
 		local position = Vector3.new(foe.position.x, foe.position.y, foe.position.z)
-		check(supported(position), "Guardian must stand above supported ground: " .. foe.id)
+		check(supported(position), "Enemy must stand above supported ground: " .. foe.id)
 		local isClear, obstacle = clear(position, 4, groundTop + 0.3, groundTop + 8, false)
-		check(isClear, "Guardian collision clearance is blocked: " .. foe.id .. " / " .. tostring(obstacle))
-		local beacon = frame(result.prompts[foe.id].Parent).Position
-		check(close(beacon.X, position.X) and close(beacon.Z + 8, position.Z), "Guardian and bounty landmark must be aligned")
-		local dodgeRadius = math.max(foe.slamRadius, if foe.boss then Rules.bossBurstRadius else 0) + 2
-		local openSamples = 0
-		for index = 1, 24 do
-			local angle = index * math.pi * 2 / 24
-			local escape = position + Vector3.new(math.cos(angle) * dodgeRadius, 0, math.sin(angle) * dodgeRadius)
-			check(supported(escape), "Guardian dodge ring crosses an unsupported edge: " .. foe.id)
-			if clear(escape, 1.25, groundTop + 0.3, groundTop + 5.7, false) then
-				openSamples += 1
-			end
+		check(isClear, "Enemy collision clearance is blocked: " .. foe.id .. " / " .. tostring(obstacle))
+		if foe.bounty ~= false then
+			bountyCount += 1
+			check(result.prompts[foe.id] ~= nil, "Bounty enemy needs its expedition landmark: " .. foe.id)
+			local beacon = frame(result.prompts[foe.id].Parent).Position
+			check(close(beacon.X, position.X) and close(beacon.Z + 8, position.Z), "Enemy and bounty landmark must be aligned")
+		else
+			check(result.prompts[foe.id] == nil, "Roaming enemy must not create an expedition interaction: " .. foe.id)
 		end
-		check(openSamples >= 18, "Guardian needs clear dodge space on at least three quarters of its arena: " .. foe.id)
+		local dodgeRadius = math.max(foe.slamRadius, if foe.boss then Rules.bossBurstRadius else 0) + 2
+		for _, radius in { dodgeRadius, Rules.patrolRadius } do
+			local openSamples = 0
+			for index = 1, 24 do
+				local angle = index * math.pi * 2 / 24
+				local escape = position + Vector3.new(math.cos(angle) * radius, 0, math.sin(angle) * radius)
+				check(supported(escape), "Enemy dodge/patrol ring crosses an unsupported edge: " .. foe.id)
+				if clear(escape, 1.25, groundTop + 0.3, groundTop + 5.7, false) then
+					openSamples += 1
+				end
+			end
+			check(openSamples >= 18, "Enemy needs clear dodge/patrol space on at least three quarters of its arena: " .. foe.id .. " / radius " .. tostring(radius))
+		end
 	end
+	check(bountyCount == 3, "Only three enemies participate in the expedition bounty sequence")
 
 	check(lighting.GlobalShadows and lighting.ClockTime > 10 and lighting.ClockTime < 17, "Region lighting must use readable daylight")
 	for _, name in { "FirstTrailAtmosphere", "FirstTrailColor", "FirstTrailBloom" } do

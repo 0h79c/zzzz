@@ -27,7 +27,9 @@ roblox.implementMethod("Workspace", "Raycast", function(_, origin, direction, pa
 		"Dodge rays respect solid collisions and exclude the character")
 	check(#parameters.FilterDescendantsInstances == 1, "Ray filter must contain exactly the current character")
 	if direction.Y < -1 then
-		if h.noGround or (h.groundLimitX and origin.X >= h.groundLimitX) then return nil end
+		table.insert(h.floorSamples, origin.X)
+		if h.noGround or (h.groundLimitX and origin.X >= h.groundLimitX)
+			or (h.gapStart and origin.X >= h.gapStart and origin.X <= h.gapEnd) then return nil end
 		local floorY = h.floorY or 4
 		if floorY > origin.Y or floorY < origin.Y + direction.Y then return nil end
 		return { Instance = h.ground, Position = Vector3.new(origin.X, floorY, origin.Z), Normal = h.normal or Vector3.yAxis }
@@ -60,7 +62,7 @@ for _, method in { "GetNetworkOwnershipAuto", "GetNetworkOwner", "SetNetworkOwne
 	end)
 end
 local function harness()
-	local h = { now = 0, roots = {}, rayHeights = {} }
+	local h = { now = 0, roots = {}, rayHeights = {}, floorSamples = {} }
 	activeHarness = h
 	local game = Instance.new("DataModel")
 	h.workspace = game:GetService("Workspace")
@@ -74,6 +76,7 @@ local function harness()
 		local root = Instance.new("Part")
 		root.Name, root.Anchored, root.Parent = "HumanoidRootPart", false, character
 		root.Position, root.CFrame = position or Vector3.new(0, 7, 0), CFrame.new(position or Vector3.new(0, 7, 0))
+		root.AssemblyLinearVelocity = Vector3.zero
 		local humanoid = Instance.new("Humanoid")
 		humanoid.Health, humanoid.WalkSpeed, humanoid.AutoRotate, humanoid.Parent = 100, 19, true, character
 		local player = { Name = name, Character = character, Parent = self.players }
@@ -121,19 +124,19 @@ local ok, _, direction = h.service.dodge(player, Vector3.new(1, 0, 1))
 check(ok and near(direction.Magnitude, 1) and direction.Y == 0, "Diagonal direction is normalized by the server")
 check(humanoid.WalkSpeed == 0 and not humanoid.AutoRotate and not ownership[root].automatic and ownership[root].owner == nil,
 	"Accepted dodge temporarily takes server ownership and disables ordinary steering")
-check(near(player.Character:GetAttribute("DodgeUntil"), 0.18), "Evade window is exactly 0.18 server seconds")
+check(near(player.Character:GetAttribute("DodgeUntil"), Rules.invulnerabilityDuration), "Evade window follows the server rule")
 check(not h.service.dodge(player, Vector3.xAxis), "One player cannot run overlapping dodges")
 h:complete(0)
-check(near((root.Position - Vector3.new(0, 7, 0)).Magnitude, 8) and near(root.Position.Y, 7), "Completed normalized dodge travels exactly eight horizontal studs")
+check(near((root.Position - Vector3.new(0, 7, 0)).Magnitude, Rules.distance) and near(root.Position.Y, 7), "Completed normalized dodge travels the full configured horizontal distance")
 check(humanoid.WalkSpeed == 19 and humanoid.AutoRotate and player.Character:GetAttribute("DodgeUntil") == 0,
 	"Completion restores movement and clears the evade attribute")
 check(ownership[root].automatic and ownership[root].autoRestores == 1, "Originally automatic ownership is restored")
 check(h.rayHeights[-15] and h.rayHeights[0] and h.rayHeights[15], "Movement checks three collision heights")
-h.now = 3.999
-check(not h.service.dodge(player, Vector3.xAxis), "Cooldown rejects immediately before four seconds")
-h.now = 4
-check(h.service.dodge(player, Vector3.xAxis), "Cooldown accepts at the exact four-second boundary")
-h:complete(4)
+h.now = Rules.cooldown - 0.001
+check(not h.service.dodge(player, Vector3.xAxis), "Cooldown rejects immediately before its boundary")
+h.now = Rules.cooldown
+check(h.service.dodge(player, Vector3.xAxis), "Cooldown accepts at the exact server boundary")
+h:complete(Rules.cooldown)
 h.service.destroy()
 
 -- Airborne second-tap dodges preserve jump intent and height; manual ownership
@@ -141,9 +144,11 @@ h.service.destroy()
 h = harness()
 player, root, humanoid = h:player("Airborne", Vector3.new(0, 9, 0), false)
 humanoid.Jump, humanoid.AutoRotate, humanoid.WalkSpeed = true, false, 23
+root.AssemblyLinearVelocity = Vector3.new(20, 6, -12)
 check(h.service.dodge(player, Vector3.xAxis), "An airborne character can dodge without requiring grounded state")
 h:complete(0)
-check(near(root.Position.X, 8) and near(root.Position.Y, 9) and humanoid.Jump, "Dodge preserves airborne height and first jump intent")
+check(near(root.Position.X, Rules.distance) and near(root.Position.Y, 9) and humanoid.Jump, "Full-distance dodge preserves airborne height and first jump intent")
+check(root.AssemblyLinearVelocity == Vector3.new(0, 6, 0), "Dodge suppresses inherited horizontal momentum while preserving jump velocity; engine integration remains untested")
 check(humanoid.WalkSpeed == 23 and not humanoid.AutoRotate and not ownership[root].automatic and ownership[root].owner == player,
 	"Completion restores custom movement settings and original manual owner")
 h.service.destroy()
@@ -167,8 +172,9 @@ for _, height in { -1.5, 0, 1.5 } do
 	h.wall.Size, h.wall.Position, h.wall.Parent = Vector3.new(0.5, 0.4, 8), Vector3.new(5, 7 + height, 0), h.workspace
 	check(h.service.dodge(player, Vector3.xAxis), "Wall test begins with accepted dodge")
 	h:complete(0)
-	check(near(root.Position.X, 2) and root.Position.X < h.wall.Position.X - Rules.collisionMargin,
-		"Ray at each supported height stops the dodge before the wall")
+	local wallSurface = h.wall.Position.X - h.wall.Size.X / 2
+	check(root.Position.X > 0 and near(wallSurface - root.Position.X, Rules.collisionMargin),
+		"Ray at each supported height uses safe partial travel and preserves the full margin before the actual wall surface")
 	check(humanoid.WalkSpeed == 19 and player.Character:GetAttribute("DodgeUntil") == 0, "Blocked dodge restores movement immediately")
 	h.service.destroy()
 end
@@ -182,7 +188,8 @@ for _, reason in { "void", "edge", "steep", "drop" } do
 	else h.floorY = -7 end
 	check(h.service.dodge(player, Vector3.xAxis), "Floor guard test begins with accepted dodge")
 	h:complete(0)
-	check(near(root.Position.X, if reason == "edge" then 2 else 0), "Unsafe floor stops movement before crossing: " .. reason)
+	check(if reason == "edge" then root.Position.X > 0 and root.Position.X < h.groundLimitX else near(root.Position.X, 0),
+		"Unsafe floor stops movement before crossing: " .. reason)
 	check(humanoid.WalkSpeed == 19 and ownership[root].automatic, "Floor rejection restores movement and ownership")
 	h.service.destroy()
 end
@@ -202,15 +209,48 @@ for _, reason in { "death", "respawn" } do
 	h.service.destroy()
 end
 
+-- Final travel is independent of normal frame rates. Use a partial last frame
+-- at the exact deadline, rather than requiring elapsed time to divide evenly.
+for _, rate in { 12, 30, 60 } do
+	h = harness()
+	player, root = h:player("Rate" .. rate)
+	check(h.service.dodge(player, Vector3.xAxis), "Frame-rate test starts active")
+	local elapsed = 0
+	while elapsed < Rules.duration do
+		local dt = math.min(1 / rate, Rules.duration - elapsed)
+		elapsed += dt
+		h:tick(elapsed, dt)
+		check(root.Position.X <= Rules.distance + 0.0001, "No frame rate can exceed the configured distance")
+	end
+	check(near(root.Position.X, Rules.distance) and player.Character:GetAttribute("DodgeUntil") == 0,
+		"An unobstructed dodge reaches full distance at " .. rate .. " Hz")
+	h.service.destroy()
+end
+
 for _, dt in { 0.02, 8 } do
 	h = harness()
 	player, root = h:player("Stalled")
 	check(h.service.dodge(player, Vector3.xAxis), "Coarse clock test starts active")
 	h:tick(8, dt)
-	check(root.Position.X >= 0 and root.Position.X <= 8.0001 and player.Character:GetAttribute("DodgeUntil") == 0,
-		"A stalled server frame finishes without exceeding eight studs")
+	check(root.Position.X >= 0 and root.Position.X <= Rules.distance + 0.0001 and player.Character:GetAttribute("DodgeUntil") == 0,
+		"A stalled server frame finishes without exceeding the configured distance")
+	if dt >= Rules.duration then check(near(root.Position.X, Rules.distance), "A safe coarse frame retains full travel") end
 	h.service.destroy()
 end
+
+-- Supported start/end points do not permit tunneling across an intervening pit.
+h = harness()
+player, root, humanoid = h:player("MidpathVoid")
+h.gapStart, h.gapEnd = 4, 12
+check(Rules.distance > h.gapEnd, "Void regression needs a supported destination beyond the hole")
+check(h.service.dodge(player, Vector3.xAxis), "Midpath void test begins active")
+h:tick(8, 8)
+check(root.Position.X > 0 and root.Position.X < h.gapStart, "Coarse movement samples intervening support and stops before the pit")
+check(#h.floorSamples >= 2 and h.floorSamples[#h.floorSamples] >= h.gapStart and h.floorSamples[#h.floorSamples] <= h.gapEnd,
+	"Void guard rejects an actual unsupported intermediate sample")
+check(humanoid.WalkSpeed == 19 and ownership[root].automatic and player.Character:GetAttribute("DodgeUntil") == 0,
+	"A midpath stop restores movement, ownership and immunity bookkeeping")
+h.service.destroy()
 
 h = harness()
 player, root, humanoid = h:player("Leaving")
@@ -219,8 +259,8 @@ check(h.service.dodge(player, Vector3.xAxis) and h.service.dodge(other, Vector3.
 h.removing:Fire(player)
 player.Parent = nil
 check(humanoid.WalkSpeed == 19 and otherHumanoid.WalkSpeed == 0, "Removing one player restores only that player's dash")
-h:tick(0.055, 0.055)
-check(root.Position.X == 0 and near(otherRoot.Position.X, 2), "A remaining player continues moving after another leaves")
+h:tick(Rules.duration / 4, Rules.duration / 4)
+check(root.Position.X == 0 and near(otherRoot.Position.X, Rules.distance / 4), "A remaining player continues moving after another leaves")
 player.Parent = h.players
 check(h.service.dodge(player, Vector3.xAxis), "Removal clears the departing player's cooldown bookkeeping")
 h.service.destroy()

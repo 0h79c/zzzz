@@ -84,6 +84,7 @@ local function animate(enemy: Enemy, dt: number, now: number, container: Folder)
 	local gait = if moving then math.clamp(speed / 8, 0, 1) else 0
 	enemy.phase += math.min(dt, 0.1) * (4 + math.min(speed, 16) * 0.9)
 	local scale = root.Size.X / 3.1
+	local boar = enemy.model:GetAttribute("EnemyKind") == "boar"
 	local anticipation = progress * progress
 	local rightArm, leftArm, lean, twist = 0, 0, 0, 0
 	if state == "MeleeWindup" then
@@ -93,10 +94,24 @@ local function animate(enemy: Enemy, dt: number, now: number, container: Folder)
 	elseif state == "SkillWindup" then
 		rightArm, leftArm, lean = anticipation * 2.55, anticipation * 2.55, anticipation * 0.14
 	end
+	local lunge, headShift, neckPitch, foreleg = 0, 0, 0, 0
+	if boar then
+		-- A tusked animal braces, draws its head back, then snaps forward;
+		-- it has no humanoid arm to inherit the guardian's punch animation.
+		twist, lean = 0, 0
+		if state == "MeleeWindup" or state == "SkillWindup" then
+			lunge, headShift, neckPitch, foreleg = -0.2 * anticipation, -0.25 * anticipation, -0.12 * anticipation, 0.18 * anticipation
+			lean = -0.08 * anticipation
+		elseif state == "MeleeRecover" then
+			local impact = 1 - progress
+			lunge, headShift, neckPitch, foreleg = 0.45 * impact, 0.4 * impact, 0.2 * impact, -0.4 * impact
+			lean = 0.08 * impact
+		end
+	end
 	local dead = if state == "Dead" then progress else 0
 	local shrink = math.max(0.04, 1 - dead * 0.96)
 	local bob = (math.sin(enemy.phase * 2) * 0.07 * gait + math.sin(now * 2.2) * 0.025) * scale
-	local body = frame * CFrame.new(0, bob - dead * 1.1 * scale, 0)
+	local body = frame * CFrame.new(0, bob - dead * 1.1 * scale, lunge * scale)
 		* CFrame.Angles(lean, twist, dead * 0.65)
 	for _, piece in enemy.pieces do
 		local name, offset = piece.source.Name, piece.offset
@@ -105,6 +120,7 @@ local function animate(enemy: Enemy, dt: number, now: number, container: Folder)
 			local phase = if side < 0 then 0 else math.pi
 			if offset.Z < -0.4 then phase += math.pi end
 			local stride = math.sin(enemy.phase + phase) * 0.35 * gait
+			if boar and offset.Z > 0 then stride += foreleg end
 			local hip = Vector3.new(offset.X, -1.1 * scale, offset.Z)
 			offset = CFrame.new(hip) * CFrame.Angles(stride, 0, 0) * CFrame.new(-hip) * offset
 		elseif name == "BranchArm" or name == "KnottedFist" then
@@ -112,6 +128,10 @@ local function animate(enemy: Enemy, dt: number, now: number, container: Folder)
 			swing -= math.sin(enemy.phase + (if side > 0 then 0 else math.pi)) * 0.2 * gait
 			local shoulder = Vector3.new(side * 1.7 * scale, 0.85 * scale, 0)
 			offset = CFrame.new(shoulder) * CFrame.Angles(swing, 0, 0) * CFrame.new(-shoulder) * offset
+		elseif boar and (name == "Head" or name == "Snout" or name == "Tusk" or name == "Eye" or name == "Ear") then
+			local neck = Vector3.new(0, 0.15 * scale, 1.25 * scale)
+			offset = CFrame.new(0, 0, headShift * scale) * CFrame.new(neck)
+				* CFrame.Angles(neckPitch, 0, 0) * CFrame.new(-neck) * offset
 		elseif name == "Head" or name == "Eye" or name == "Brow" or string.find(name, "Crown") or name == "AncientCrest" then
 			local neck = Vector3.new(0, 1.3 * scale, 0)
 			offset = CFrame.new(neck) * CFrame.Angles(-lean * 0.7, -twist * 0.25, 0) * CFrame.new(-neck) * offset

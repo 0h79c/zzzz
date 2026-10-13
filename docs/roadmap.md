@@ -25,6 +25,10 @@ Hai bản đầu dựng đường săn ba trận, một mini-boss, ba ngoại h�
 
 Map đứng trước hồ sơ vì cần một không gian hợp lý để thử chase, leash và nhịp nhiệm vụ. Nếu combat gặp lỗi dữ liệu hoặc loot cần làm sớm, có thể làm nền hồ sơ trước mở rộng map; vẫn chỉ trang trí một vùng, không bỏ qua lưu dữ liệu để làm shop. Các mốc class/trang bị cần định nghĩa chung rõ trước khi ghép skill và pet buff.
 
+## Trạng thái sau phản hồi đấm/lướt
+
+Đã có AI di chuyển và bản mở rộng chín spawn/bốn loại trong một vùng, cùng đòn đấm C0 và lướt 16 studs sau phản hồi bản ngắn. Sáu quái thường đánh được không cần nhận bounty nhưng chưa có loot/EXP; không đánh dấu mốc dữ liệu/economy là đã xong. Rendering và cảm giác đấm/lướt cần người dùng thử lại trong Studio. Bước code tiếp là hồ sơ + nền level/class/trang bị, sau đó mới drop/shop.
+
 ## Chia nhỏ để không bỏ sót
 
 Mốc hiện tại chỉ chữa nền combat và điều khiển. Kiểm thử một quái di chuyển/đánh tốt rồi mới sao chép hành vi cho các loại còn lại. Không ghép vào đợt đó cả EXP, đồ rơi, craft, cây nghề và tám skill hoàn chỉnh. Những mục chưa làm vẫn là yêu cầu được giữ trong design, không tự biến thành tùy chọn bị bỏ.

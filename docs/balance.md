@@ -11,7 +11,7 @@ Chuyến săn ba mục tiêu hiện là bài thử nền combat. Mục tiêu th�
 | Người chơi | 100 máu; đi 20 studs/giây |
 | Đánh thường | Click; 10 sát thương, hồi 0,6 giây, cự ly 8 studs |
 | Lệnh thú | 18 sát thương, hồi 3,2 giây, cự ly 18 studs; đòn tới sau 0,3 giây |
-| Né | Nhấn Space hai lần trong 0,28 giây; tối đa 8 studs trong 0,22 giây; miễn sát thương tối đa 0,18 giây; hồi 4 giây |
+| Né | Nhấn Space hai lần trong 0,28 giây; tối đa 16 studs trong 0,3 giây; miễn sát thương tối đa 0,18 giây; hồi 4 giây |
 | Đòn thường của quái | Lấy đà 0,65 giây, khóa hướng, kiểm tra cung đánh phía trước và cự ly 5 studs; hồi động tác 0,28 giây |
 | Bramble Sprout | 140 máu; đánh thường 8 sát thương, hồi 1,2 giây từ lúc lấy đà; hiện không dùng kỹ năng AoE |
 | Reed Guardian | 200 máu; đánh thường 10 sát thương, hồi 1,2 giây từ lúc lấy đà; hiện không dùng kỹ năng AoE |
@@ -39,6 +39,8 @@ Rủi ro ngược lại là combat quá dễ khi giữ khoảng cách: người 
 Với thanh 100 máu đầy, riêng đòn thường cần 13 lần trúng từ Sprout, 10 từ Guardian hoặc 9 từ boss để hạ người chơi. Đây là ngân sách lỗi theo từng loại đòn, không phải số lần một người sẽ bị trúng. Máu mang từ trận trước và kỹ năng boss làm ngân sách thực thấp hơn. Chưa dự đoán tỷ lệ chết cho người mới khi chưa có dữ liệu về di chuyển và camera.
 
 ## Thời gian hạ quái lý thuyết
+
+Vùng nay có chín spawn/bốn loại. Ba bounty vẫn là vòng nhiệm vụ; sáu quái thường (Sprout 80 máu, Boar 75, Reed 100) có thể đánh không cần bounty nhưng chưa drop tiền/EXP/gear. Không cộng sáu trận này vào thời gian nhiệm vụ mặc định. Lướt vừa tăng từ 8 lên 16 studs theo phản hồi; thời gian 0,3 giây/cooldown 4 giây và kiểm tra từng đoạn cần thử lại trong Studio, không suy độ khó bằng quãng lướt đơn lẻ.
 
 Chạy `.tools/lune run scripts/balance_report.luau` từ thư mục project. Báo cáo đọc `CombatRules`, `DodgeRules`, `Expedition`, tốc độ từ project và hình học đường nếu còn biểu diễn bằng bảng tọa độ. Không có bộ chỉ số quái thứ hai trong script.
 

@@ -1,7 +1,8 @@
 --!strict
 local DodgeRules = {
-	distance = 8,
-	duration = 0.22,
+	distance = 16,
+	duration = 0.3,
+	maxStepDistance = 2,
 	invulnerabilityDuration = 0.18,
 	cooldown = 4,
 	doubleTapWindow = 0.28,

@@ -18,6 +18,8 @@ export type FoeDefinition = {
 	slamRadius: number,
 	windup: number,
 	boss: boolean,
+	kind: string,
+	bounty: boolean,
 }
 
 CombatRules.meleeDamage = 10
@@ -52,20 +54,35 @@ CombatRules.groundHeight = 4.1
 local foes: { FoeDefinition } = {
 	{
 		id = "moss", name = "Bramble Sprout", position = { x = -45, y = 7, z = -17 },
-		maxHealth = 140, meleeDamage = 8, slamDamage = 12, slamRadius = 5, windup = 0.9, boss = false,
+		maxHealth = 140, meleeDamage = 8, slamDamage = 12, slamRadius = 5, windup = 0.9, boss = false, kind = "sprout", bounty = true,
 	},
 	{
 		id = "river", name = "Reed Guardian", position = { x = 0, y = 7, z = -57 },
-		maxHealth = 200, meleeDamage = 10, slamDamage = 16, slamRadius = 5, windup = 1.0, boss = false,
+		maxHealth = 200, meleeDamage = 10, slamDamage = 16, slamRadius = 5, windup = 1.0, boss = false, kind = "reed", bounty = true,
 	},
 	{
 		id = "ruins", name = "The Hollow Crown", position = { x = 65, y = 8, z = -72 },
-		maxHealth = 600, meleeDamage = 12, slamDamage = 22, slamRadius = 7, windup = 1.2, boss = true,
+		maxHealth = 600, meleeDamage = 12, slamDamage = 22, slamRadius = 7, windup = 1.2, boss = true, kind = "ancient", bounty = true,
 	},
 }
-local knownIds: { [string]: boolean } = {}
+local ambient = {
+	{ id = "brush01", name = "Bramble Forager", kind = "sprout", x = -62, z = 28, health = 80, damage = 6 },
+	{ id = "brush02", name = "Brush Boar", kind = "boar", x = -65, z = -66, health = 75, damage = 6 },
+	{ id = "brush03", name = "Brush Boar", kind = "boar", x = 38, z = -28, health = 75, damage = 6 },
+	{ id = "brush04", name = "Bramble Forager", kind = "sprout", x = 70, z = 33, health = 80, damage = 6 },
+	{ id = "brush05", name = "Reed Warden", kind = "reed", x = -40, z = -100, health = 100, damage = 7 },
+	{ id = "brush06", name = "Reed Warden", kind = "reed", x = 50, z = -116, health = 100, damage = 7 },
+}
+for _, spawn in ambient do
+	table.insert(foes, {
+		id = spawn.id, name = spawn.name, position = { x = spawn.x, y = 7, z = spawn.z },
+		kind = spawn.kind, bounty = false, boss = false, maxHealth = spawn.health, meleeDamage = spawn.damage,
+		slamDamage = 0, slamRadius = 0, windup = 0.9,
+	})
+end
+local knownIds: { [string]: FoeDefinition } = {}
 for _, foe in foes do
-	knownIds[foe.id] = true
+	knownIds[foe.id] = foe
 	table.freeze(foe.position)
 	table.freeze(foe)
 end
@@ -133,15 +150,17 @@ function CombatRules.attackPattern(definition: FoeDefinition, sequence: number)
 end
 
 function CombatRules.eligible(state: HuntState?, alive: boolean, foeId: string): boolean
-	return alive and state ~= nil and state.active == true
-		and knownIds[foeId] == true and state.defeated[foeId] ~= true
+	local definition = knownIds[foeId]
+	return alive and state ~= nil and definition ~= nil
+		and (not definition.bounty or (state.active == true and state.defeated[foeId] ~= true))
 end
 
 function CombatRules.canReward(
 	state: HuntState?, alive: boolean, connected: boolean, contributed: boolean,
 	foeId: string, playerPosition: Point, foePosition: Point
 ): boolean
-	return connected and contributed and CombatRules.eligible(state, alive, foeId)
+	local definition = knownIds[foeId]
+	return definition ~= nil and definition.bounty and connected and contributed and CombatRules.eligible(state, alive, foeId)
 		and CombatRules.inRange(playerPosition, foePosition, CombatRules.rewardRange)
 end
 

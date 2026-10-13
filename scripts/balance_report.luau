@@ -49,6 +49,7 @@ print("Outgoing bound assumes uninterrupted perfect attack inputs, ready cooldow
 for _, foe in Rules.foes do
 	local cooldown = if foe.boss then Rules.bossMeleeCooldown else Rules.enemyMeleeCooldown
 	local period = math.max(cooldown, Rules.enemyMeleeWindup + Rules.enemyMeleeRecover)
+	print(string.format("  %s — %s", foe.id, if foe.bounty then "bounty target" else "ambient practice enemy; no EXP/loot yet"))
 	print(string.format("  %-20s %4dHP | melee %.1fs | melee + pet %.1fs | basic %d, nominal period %.2fs, contact pressure <= %.2fHP/s, %d hits to exhaust full HP.",
 		foe.name, foe.maxHealth, outgoingTime(foe, 1, false), outgoingTime(foe, 1, true),
 		foe.meleeDamage, period, foe.meleeDamage / period, math.ceil(Rules.playerMaxHealth / foe.meleeDamage)))

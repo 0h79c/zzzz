@@ -15,13 +15,15 @@ Tệp đã build: `build/Wildbond.rbxlx`. Tải tệp về máy Windows hoặc m
 - Di chuyển bằng điều khiển Roblox thông thường.
 - **Click**, **R2** hoặc nút **STRIKE**: đánh thường. Click hụt/tập đánh vẫn có animation, không gây sát thương ngoài phạm vi.
 - **1**, **L2** hoặc nút **BOND**: gọi thú đánh quái gần nhất trong phạm vi 18 studs. Hồi chiêu 3,2 giây; server kiểm tra lại trước khi sát thương đến sau 0,3 giây. Ô 2–8 để dành skill class đã học ở các mốc sau.
-- **Space hai lần trong 0,28 giây**, **B** trên tay cầm hoặc **DODGE**: né theo hướng di chuyển/hướng nhìn, tối đa 8 studs trong 0,22 giây; cooldown 4 giây. Space lần đầu vẫn nhảy. Vật cản hoặc thiếu mặt đất có thể kết thúc né sớm; chưa có thanh thể lực.
+- **Space hai lần trong 0,28 giây**, **B** trên tay cầm hoặc **DODGE**: lướt theo hướng di chuyển/hướng nhìn, tối đa 16 studs trong 0,3 giây; cooldown 4 giây. Space lần đầu vẫn nhảy. Server kiểm tra từng đoạn đường, dừng trước vật cản/hố và giữ vận tốc nhảy; chưa có thanh thể lực.
 - **E**, nút **X** trên tay cầm hoặc prompt cảm ứng: nhận nhiệm vụ, lấy tinh thể, nhận thưởng.
 - **C**, **Y** trên tay cầm hoặc nút **Companions**: mở bộ sưu tập và đổi thú.
 - **MOVE!**: rời vòng tại vị trí được đánh dấu. **RETREAT!**: rút ra ngoài vòng quanh boss. Không có hồi máu thụ động; nhận hunt thành công, hoàn thành hoặc hồi sinh sẽ hồi đầy máu. Chết giữ bước nhiệm vụ trong phiên.
 - HUD ghi thời gian cả chuyến, số lần ngã, lượt gần nhất và thời gian tốt nhất trong phiên. Không có thưởng thêm vì chạy nhanh.
 
-Vùng hiện tại có nền liên tục 220×260, đường rừng, thác, phế tích và bến xe ngựa trang trí chưa chở người. Vẫn ba quái nhiệm vụ; thêm cụm quái và loại mới là mốc tiếp. Animation quái và nhân vật tạo bằng chuyển động thủ tục, chưa phải bộ animation hoàn thiện hoặc đã được kiểm chứng trong Studio. Giao diện dùng tiếng Anh; model/hình khối gốc lấy cảm hứng từ ảnh tham khảo. Chưa có âm nhạc hoặc asset của bên khác.
+Vùng hiện tại có nền liên tục 220×260, đường rừng, thác, phế tích và bến xe ngựa trang trí chưa chở người. Có chín quái thuộc bốn loại: Sprout, Reed, Ancient và Brush Boar; ba mục tiêu bounty và sáu quái thường để thử combat. Quái thường đánh được không cần nhận bounty, chưa rơi tiền/EXP/trang bị. Animation quái và nhân vật tạo bằng chuyển động thủ tục, chưa phải bộ animation hoàn thiện. Giao diện dùng tiếng Anh; model/hình khối gốc lấy cảm hứng từ ảnh tham khảo. Chưa có âm nhạc hoặc asset của bên khác.
+
+Đợt sửa theo phản hồi Studio chuyển đòn đấm sang `Motor6D.C0`: hai tay đánh luân phiên, R15 có vai/khuỷu/cổ tay, vệt theo nắm đấm; trúng mới có tia va chạm và số damage. Test tính chuyển động nắm tay bằng forward kinematics thay vì chỉ kiểm tra đã đổi thuộc tính joint. Hình ảnh và Animator native vẫn cần thử lại trong Studio trên cả R6/R15.
 
 ## Phát triển trong môi trường đám mây
 

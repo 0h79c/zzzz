@@ -1,6 +1,8 @@
 --!strict
 -- Greywater Reach is a connected woodland valley, built from original local geometry.
 local Lighting = game:GetService("Lighting")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CombatRules = require(ReplicatedStorage:WaitForChild("Wildbond"):WaitForChild("CombatRules"))
 
 local WorldBuilder = {}
 
@@ -94,10 +96,10 @@ function WorldBuilder.build(): World
 		return (point - (a + line * along)).Magnitude
 	end
 
-	local function path(a: Vector3, b: Vector3, width: number)
+	local function path(a: Vector3, b: Vector3, width: number, name: string?)
 		local delta = b - a
 		local middle = (a + b) / 2
-		part("Trail", Vector3.new(width, 0.12, delta.Magnitude + 1), CFrame.lookAt(middle, b), palette.path, Enum.Material.Sand)
+		part(name or "Trail", Vector3.new(width, 0.12, delta.Magnitude + 1), CFrame.lookAt(middle, b), palette.path, Enum.Material.Sand)
 	end
 
 	-- Keep the encounter floor level while the surrounding land reads as a valley.
@@ -121,6 +123,14 @@ function WorldBuilder.build(): World
 	end
 	path(Vector3.new(-23, 4.07, 27), Vector3.new(0, 4.07, 15), 7)
 	path(Vector3.new(12, 4.07, 15), Vector3.new(0, 4.07, 15), 7)
+	-- Short branches invite hunting beyond the expedition loop, without new boards.
+	local sideTrails = {
+		{ Vector3.new(-45, 4.07, -25), Vector3.new(-65, 4.07, -66) },
+		{ Vector3.new(63, 4.07, -18), Vector3.new(70, 4.07, 33) },
+	}
+	for _, branch in sideTrails do
+		path(branch[1], branch[2], 6, "SideTrail")
+	end
 
 	-- The tavern has an actual doorway, a warm interior, and a readable silhouette.
 	local tavernX, tavernZ = -24, 38
@@ -366,9 +376,12 @@ function WorldBuilder.build(): World
 			or distanceToSegment(point, Vector3.new(-7, 4.07, 55), Vector3.new(-45, 4.07, 55)) < 7 then
 			return false
 		end
-		for _, stop in stops do
-			local encounter = Vector3.new(stop.position.X, 4.07, stop.position.Z + 8)
-			if (point - encounter).Magnitude < (if stop.id == "ruins" then 28 else 23) then
+		-- Spawn definitions are shared with combat: added species reserve their own
+		-- roaming space automatically instead of silently spawning under scenery.
+		for _, foe in CombatRules.foes do
+			local encounter = Vector3.new(foe.position.x, 4.07, foe.position.z)
+			local clearingRadius = math.max(CombatRules.patrolRadius + 11, if foe.boss then 28 else 23)
+			if (point - encounter).Magnitude < clearingRadius then
 				return false
 			end
 		end
@@ -377,6 +390,11 @@ function WorldBuilder.build(): World
 		end
 		for index = 1, #trailPoints - 1 do
 			if distanceToSegment(point, trailPoints[index], trailPoints[index + 1]) < 9 then
+				return false
+			end
+		end
+		for _, branch in sideTrails do
+			if distanceToSegment(point, branch[1], branch[2]) < 8 then
 				return false
 			end
 		end

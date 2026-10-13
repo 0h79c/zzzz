@@ -115,6 +115,8 @@ local function buildFoe(parent: Instance, definition: Definition, now: number): 
 	local model = Instance.new("Model")
 	model.Name = definition.name
 	model:SetAttribute("EnemyId", definition.id)
+	model:SetAttribute("EnemyKind", definition.kind)
+	model:SetAttribute("BountyTarget", definition.bounty)
 	model:SetAttribute("Health", definition.maxHealth)
 	model:SetAttribute("MaxHealth", definition.maxHealth)
 	model:SetAttribute("Status", "Ready")
@@ -128,48 +130,73 @@ local function buildFoe(parent: Instance, definition: Definition, now: number): 
 	model:SetAttribute("ActionDuration", 0)
 	model:SetAttribute("FacingDirection", Vector3.new(0, 0, 1))
 	local scale = if definition.boss then 1.4 else 1
-	local bark = if definition.id == "river" then Color3.fromRGB(80, 115, 117) else Color3.fromRGB(108, 86, 63)
+	local bark = if definition.kind == "reed" then Color3.fromRGB(80, 115, 117) else Color3.fromRGB(108, 86, 63)
 	local stone = if definition.boss then Color3.fromRGB(114, 119, 94) else Color3.fromRGB(143, 139, 112)
-	local leaves = if definition.id == "river" then Color3.fromRGB(74, 181, 156) else Color3.fromRGB(120, 166, 76)
+	local leaves = if definition.kind == "reed" then Color3.fromRGB(74, 181, 156) else Color3.fromRGB(120, 166, 76)
 	local glow = if definition.boss then Color3.fromRGB(255, 174, 72) else Color3.fromRGB(171, 248, 164)
 	local function shaped(name: string, size: Vector3, offset: Vector3, color: Color3, angles: Vector3?): Part
 		local rotation = angles or Vector3.zero
 		return part(model, name, size * scale, CFrame.new(center + offset * scale)
 			* CFrame.Angles(math.rad(rotation.X), math.rad(rotation.Y), math.rad(rotation.Z)), color)
 	end
-	local body = shaped("BarkCore", Vector3.new(3.1, 3.35, 2.5), Vector3.zero, bark, Vector3.new(0, 0, -3))
+	local boar = definition.kind == "boar"
+	local reed = definition.kind == "reed"
+	local body = shaped("BarkCore", if boar then Vector3.new(3.1, 2.3, 4.4)
+		elseif reed then Vector3.new(2.4, 3.5, 2.1) else Vector3.new(3.1, 3.35, 2.5),
+		Vector3.zero, bark, Vector3.new(0, 0, -3))
 	body.CanCollide = true
 	model.PrimaryPart = body
-	shaped("StoneApron", Vector3.new(2.7, 1.5, 0.6), Vector3.new(0, -0.65, 1.35), stone, Vector3.new(0, 0, 6))
-	shaped("ChestRune", Vector3.new(0.45, 1.15, 0.14), Vector3.new(0, -0.25, 1.69), glow).Material = Enum.Material.Neon
-	shaped("Head", Vector3.new(2.7, 1.9, 2.3), Vector3.new(0, 2.15, 0), stone, Vector3.new(0, 5, 2))
-	for _, direction in { -1, 1 } do
-		shaped("RootLeg", Vector3.new(1.15, 1.85, 1.3), Vector3.new(direction * 0.92, -2.05, 0), bark,
-			Vector3.new(0, direction * 10, direction * 3))
-		shaped("RootFoot", Vector3.new(1.5, 0.5, 1.85), Vector3.new(direction * 1.02, -2.77, 0.3), stone)
-		shaped("BranchArm", Vector3.new(0.95, 2.6, 1.1), Vector3.new(direction * 2.02, -0.4, 0), bark,
-			Vector3.new(0, 0, direction * 17))
-		shaped("KnottedFist", Vector3.new(1.4, 1.15, 1.4), Vector3.new(direction * 2.4, -1.62, 0.15), stone,
-			Vector3.new(0, direction * 14, direction * 8))
-		shaped("Eye", Vector3.new(0.36, 0.32, 0.15), Vector3.new(direction * 0.64, 2.35, 1.2), glow).Material = Enum.Material.Neon
-		shaped("TwigCrown", Vector3.new(0.33, 2.05, 0.4), Vector3.new(direction * 0.85, 3.48, -0.35), bark,
-			Vector3.new(12, 0, -direction * 22))
-		shaped("LeafCrown", Vector3.new(1.25, 0.62, 1.1), Vector3.new(direction * 1.3, 4.07, -0.4), leaves,
-			Vector3.new(5, direction * 20, -direction * 12))
-	end
-	shaped("Brow", Vector3.new(2.35, 0.27, 0.33), Vector3.new(0, 2.64, 1.14), bark, Vector3.new(0, 0, 3))
-	shaped("MossShoulder", Vector3.new(1.85, 0.65, 1.75), Vector3.new(-1.27, 1.68, -0.1), leaves,
-		Vector3.new(0, -12, 9))
-	if definition.boss then
-		shaped("AncientCrest", Vector3.new(0.9, 1.3, 0.55), Vector3.new(0, 3.47, 0.2), glow,
-			Vector3.new(0, 0, 45)).Material = Enum.Material.Neon
+	if boar then
+		local fur, snout = Color3.fromRGB(131, 89, 57), Color3.fromRGB(91, 61, 47)
+		body.Color = fur
+		shaped("Head", Vector3.new(2.5, 1.9, 2.2), Vector3.new(0, -0.2, 2.1), fur)
+		shaped("Snout", Vector3.new(1.6, 1, 0.9), Vector3.new(0, -0.55, 3.52), snout)
+		shaped("Ridge", Vector3.new(1.2, 0.6, 3.5), Vector3.new(0, 1.25, -0.3), snout)
+		shaped("MossBack", Vector3.new(1.2, 0.3, 1.8), Vector3.new(-0.85, 1.15, -0.7), leaves)
+		shaped("Tail", Vector3.new(0.3, 0.35, 1.4), Vector3.new(0, 0.05, -2.75), snout, Vector3.new(20, 0, 0))
+		for _, side in { -1, 1 } do
+			for _, endZ in { -1.3, 1.1 } do
+				shaped("RootLeg", Vector3.new(0.75, 1.75, 0.85), Vector3.new(side * 1.12, -1.95, endZ), fur)
+				shaped("RootFoot", Vector3.new(0.9, 0.45, 1.1), Vector3.new(side * 1.12, -2.72, endZ + 0.12), snout)
+			end
+			shaped("Ear", Vector3.new(0.65, 1, 0.5), Vector3.new(side * 0.95, 1.05, 2.15), fur, Vector3.new(0, 0, -side * 20))
+			shaped("Eye", Vector3.new(0.22, 0.25, 0.22), Vector3.new(side * 1.23, 0.2, 2.75), Color3.fromRGB(248, 202, 94))
+			shaped("Tusk", Vector3.new(0.28, 1.15, 0.3), Vector3.new(side * 0.9, -0.2, 3.4), Color3.fromRGB(236, 221, 180),
+				Vector3.new(-20, 0, -side * 18))
+		end
+	else
+		shaped("StoneApron", Vector3.new(2.7, 1.5, 0.6), Vector3.new(0, -0.65, 1.35), stone, Vector3.new(0, 0, 6))
+		shaped("ChestRune", Vector3.new(0.45, 1.15, 0.14), Vector3.new(0, -0.25, 1.69), glow).Material = Enum.Material.Neon
+		shaped("Head", Vector3.new(2.7, 1.9, 2.3), Vector3.new(0, 2.15, 0), stone, Vector3.new(0, 5, 2))
+		for _, direction in { -1, 1 } do
+			shaped("RootLeg", Vector3.new(1.15, 1.85, 1.3), Vector3.new(direction * 0.92, -2.05, 0), bark,
+				Vector3.new(0, direction * 10, direction * 3))
+			shaped("RootFoot", Vector3.new(1.5, 0.5, 1.85), Vector3.new(direction * 1.02, -2.77, 0.3), stone)
+			shaped("BranchArm", Vector3.new(0.95, 2.6, 1.1), Vector3.new(direction * 2.02, -0.4, 0), bark,
+				Vector3.new(0, 0, direction * 17))
+			shaped("KnottedFist", Vector3.new(1.4, 1.15, 1.4), Vector3.new(direction * 2.4, -1.62, 0.15), stone,
+				Vector3.new(0, direction * 14, direction * 8))
+			shaped("Eye", Vector3.new(0.36, 0.32, 0.15), Vector3.new(direction * 0.64, 2.35, 1.2), glow).Material = Enum.Material.Neon
+			shaped("TwigCrown", Vector3.new(0.33, 2.05, 0.4), Vector3.new(direction * 0.85, 3.48, -0.35), bark,
+				Vector3.new(12, 0, -direction * 22))
+			shaped("LeafCrown", if reed then Vector3.new(0.55, 2.6, 0.4) else Vector3.new(1.25, 0.62, 1.1),
+				Vector3.new(direction * 1.3, 4.07, -0.4), leaves,
+				Vector3.new(5, direction * 20, -direction * 12))
+		end
+		shaped("Brow", Vector3.new(2.35, 0.27, 0.33), Vector3.new(0, 2.64, 1.14), bark, Vector3.new(0, 0, 3))
+		shaped("MossShoulder", Vector3.new(1.85, 0.65, 1.75), Vector3.new(-1.27, 1.68, -0.1), leaves,
+			Vector3.new(0, -12, 9))
+		if definition.boss then
+			shaped("AncientCrest", Vector3.new(0.9, 1.3, 0.55), Vector3.new(0, 3.47, 0.2), glow,
+				Vector3.new(0, 0, 45)).Material = Enum.Material.Neon
+		end
 	end
 
 	local label = Instance.new("BillboardGui")
 	label.Name = "GuardianHealth"
 	label.Adornee = body
 	label.Size = UDim2.fromOffset(220, 68)
-	label.StudsOffsetWorldSpace = Vector3.new(0, 6 * scale, 0)
+	label.StudsOffsetWorldSpace = Vector3.new(0, (if boar then 3.5 else 6) * scale, 0)
 	label.MaxDistance = 90
 	label.AlwaysOnTop = true
 	label.Parent = model
@@ -421,7 +448,7 @@ function CombatService.start(
 		for _, player in players do if player.Character then table.insert(excluded, player.Character) end end
 		parameters.FilterDescendantsInstances = excluded
 		parameters.RespectCanCollide = true
-		local width = if foe.definition.boss then 2.5 else 1.8
+		local width = if foe.definition.boss then 2.5 elseif foe.definition.kind == "boar" then 2.7 else 1.8
 		for _, angle in { 0, 45, -45, 90, -90, 135, -135, 180 } do
 			local direction = CFrame.Angles(0, math.rad(angle), 0):VectorToWorldSpace(offset.Unit)
 			local position = foe.root.Position + direction * step
@@ -549,31 +576,31 @@ function CombatService.start(
 	end)
 
 	local service = {}
-	function service.attack(player: Player): (boolean, string, Vector3?)
+	function service.attack(player: Player): (boolean, string, Vector3?, boolean?)
 		if destroyed then
-			return false, "Combat is unavailable.", nil
+			return false, "Combat is unavailable.", nil, nil
 		end
 		local source = actor(player)
 		if not source then
-			return false, "Wait until your character is ready.", nil
+			return false, "Wait until your character is ready.", nil, nil
 		end
 		local state = getState(player)
 		local at = Workspace:GetServerTimeNow()
 		if not Rules.cooldownReady(at, lastAttack[player], Rules.meleeCooldown) then
-			return false, "Your next swing is not ready yet.", nil
+			return false, "Your next swing is not ready yet.", nil, nil
 		end
 		lastAttack[player] = at
 		local ahead = source.root.Position + source.root.CFrame.LookVector * 6
-		if not state or not state.active then return true, "Practice swing.", ahead end
+		if not state then return true, "Practice swing.", ahead, false end
 		local selected = selectFoe(source, state, Rules.meleeRange)
 		if not selected then
-			return true, "Swing.", ahead
+			return true, if state.active then "Swing." else "Practice swing.", ahead, false
 		end
 		damage(selected, player, source, Rules.meleeDamage, at)
 		if selected.health <= 0 then
-			return true, selected.definition.name .. " defeated!", selected.root.Position
+			return true, selected.definition.name .. " defeated!", selected.root.Position, true
 		end
-		return true, selected.definition.name .. ": " .. tostring(selected.health) .. " HP", selected.root.Position
+		return true, selected.definition.name .. ": " .. tostring(selected.health) .. " HP", selected.root.Position, true
 	end
 
 	function service.cooldown(player: Player): number
@@ -585,14 +612,15 @@ function CombatService.start(
 		if destroyed then return false, "Combat is unavailable." end
 		local source, state = actor(player), getState(player)
 		if not source then return false, "Wait until your character is ready." end
-		if not state or not state.active then return false, "Start an expedition at camp first." end
+		if not state then return false, "Wait until your companion is ready." end
 		if not Rules.canBond(state) then return false, "Equip a companion you own first." end
 		local at = Workspace:GetServerTimeNow()
 		if not Rules.cooldownReady(at, lastBond[player], Rules.petCooldown) then
 			return false, "Your companion is catching its breath."
 		end
 		local selected = selectFoe(source, state, Rules.petRange)
-		if not selected then return false, "Move within 18 studs of an unfinished guardian." end
+		if not selected then return false, if state.active then "Move within 18 studs of an eligible creature."
+			else "Move near a wild creature, or begin a hunt for bounty guardians." end
 		lastBond[player] = at
 		engage(selected, at)
 		local life, character, equipped, defeated = selected.life, source.character, state.equipped, state.defeated

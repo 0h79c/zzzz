@@ -40,22 +40,32 @@ function DodgeService.start()
 				delta = math.min(delta, math.max(0, dash.endsAt - dash.lastStep))
 			end
 			local step = math.min(Rules.distance - dash.travelled, Rules.distance / Rules.duration * delta)
-			local position = dash.root.Position
-			local blocked = false
-			for _, height in { -1.5, 0, 1.5 } do
-				if Workspace:Raycast(position + Vector3.new(0, height, 0), dash.direction * (step + Rules.collisionMargin), dash.parameters) then
-					blocked = true
+			-- Prevent inherited running momentum from adding distance to this move,
+			-- while leaving the first tap's jump/gravity velocity intact.
+			local velocity = dash.root.AssemblyLinearVelocity
+			dash.root.AssemblyLinearVelocity = Vector3.new(0, velocity.Y, 0)
+			while step > 0.0001 and active[player] == dash do
+				local position = dash.root.CFrame.Position
+				local segment = math.min(step, Rules.maxStepDistance)
+				local safe = segment
+				for _, height in { -1.5, 0, 1.5 } do
+					local origin = position + Vector3.new(0, height, 0)
+					local hit = Workspace:Raycast(origin, dash.direction * (segment + Rules.collisionMargin), dash.parameters)
+					if hit then safe = math.min(safe, math.max(0, (hit.Position - origin).Magnitude - Rules.collisionMargin)) end
+				end
+				if safe <= 0.0001 then finish(player); break end
+				local nextPosition = position + dash.direction * safe
+				local floor = Workspace:Raycast(nextPosition + Vector3.new(0, 4, 0), Vector3.new(0, -24, 0), dash.parameters)
+				if not floor or floor.Normal.Y < 0.55 or floor.Position.Y < position.Y - 12 then
+					finish(player)
 					break
 				end
+				dash.root.CFrame += dash.direction * safe
+				dash.travelled += safe
+				step -= safe
+				if safe < segment - 0.0001 then finish(player); break end
 			end
-			local nextPosition = position + dash.direction * step
-			local floor = Workspace:Raycast(nextPosition + Vector3.new(0, 4, 0), Vector3.new(0, -24, 0), dash.parameters)
-			if blocked or not floor or floor.Normal.Y < 0.55 or floor.Position.Y < position.Y - 12 then
-				finish(player)
-				continue
-			end
-			dash.root.CFrame += dash.direction * step
-			dash.travelled += step
+			if active[player] ~= dash then continue end
 			dash.lastStep = math.min(now, dash.endsAt)
 			if now >= dash.endsAt or dash.travelled >= Rules.distance then finish(player) end
 		end

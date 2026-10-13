@@ -76,6 +76,7 @@ local getState, defeated, bondEffect, closed
 local attacks, bonds, destroyed = 0, 0, 0
 local dodges, dodgeDestroyed, dodgeInputs = 0, 0, {}
 local swingAllowed = true
+local swingHit = true
 local swingTarget = Vector3.new(6, 7, 9)
 local dodgeDirection = Vector3.new(1, 0, 0)
 local combat = {
@@ -83,7 +84,7 @@ local combat = {
 		assert(getState(value))
 		if not swingAllowed then return false, "Your next swing is not ready yet." end
 		attacks += 1
-		return true, "Swing!", swingTarget
+		return true, "Swing!", swingTarget, swingHit
 	end,
 	bond = function(value) assert(getState(value)); bonds += 1; return true end,
 	destroy = function() destroyed += 1 end,
@@ -176,6 +177,7 @@ command.OnServerEvent:Fire(hunter, "dodge", Vector3.new(0, 0, -1))
 command.OnServerEvent:Fire(hunter, "sync")
 check(attacks == 1 and bonds == 1 and latest(hunter)[1].timing.elapsed == 1, "Attack, bond and sync use independent rate limits at the same instant")
 check(dodges == 1 and effect.calls[1].args[1] == "melee" and effect.calls[1].args[2] == swingTarget, "Accepted melee routes the server-selected cosmetic swing position")
+check(effect.calls[1].args[3] == true, "Confirmed server hits explicitly enable impact effects")
 check(effect.calls[2].player == hunter and effect.calls[2].args[1] == "dodge" and effect.calls[2].args[2] == dodgeDirection, "Dodge uses its independent command interval and server-authorized effect direction")
 check(health.Health == 40 and getState(hunter).shells == 0 and not getState(hunter).defeated.moss, "Movement and cosmetic attacks cannot heal or award progression")
 command.OnServerEvent:Fire(hunter, "attack")
@@ -184,7 +186,10 @@ command.OnServerEvent:Fire(hunter, "dodge", Vector3.new(0, 0, -1))
 check(attacks == 1 and bonds == 1, "Repeated commands remain throttled within their action")
 check(dodges == 1 and #dodgeInputs == 1 and #effect.calls == 2, "Repeated dodge never reaches the movement service or creates an effect")
 now = 3.11
+swingHit = false
 command.OnServerEvent:Fire(hunter, "attack")
+check(effect.calls[#effect.calls].args[3] == false, "An accepted empty swing never claims a confirmed hit")
+swingHit = true
 command.OnServerEvent:Fire(hunter, "bond")
 check(attacks == 2 and bonds == 2, "Each combat command resumes after its own interval")
 bondEffect(hunter, Vector3.new(5, 7, 9))
